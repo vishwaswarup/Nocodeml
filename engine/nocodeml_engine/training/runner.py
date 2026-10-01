@@ -45,7 +45,8 @@ def dataset_fingerprint(df: pd.DataFrame) -> str:
 
 
 def config_hash(config: PipelineConfig) -> str:
-    return hashlib.sha256(config.model_dump_json().encode()).hexdigest()[:16]
+    """Hash of the configuration *content*; the version number is deliberately excluded."""
+    return hashlib.sha256(config.model_dump_json(exclude={"version"}).encode()).hexdigest()[:16]
 
 
 def environment_info() -> dict[str, str]:

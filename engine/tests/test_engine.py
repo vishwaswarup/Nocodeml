@@ -45,7 +45,7 @@ def test_classification_end_to_end(churn_df, churn_config, tmp_path):
     statuses = {c.id: c.status for c in res.quality.checks}
     assert statuses["preprocessing_leakage"] == "pass"
     assert statuses["split_isolation"] == "pass"
-    assert statuses["identifier_feature"] if "identifier_feature" in statuses else True
+    assert "identifier_feature" not in statuses  # customer_id was dropped
     assert res.quality.score is not None
 
     paths = export_artifacts(run, churn_config, tmp_path)

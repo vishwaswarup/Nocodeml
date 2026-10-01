@@ -266,6 +266,15 @@ def validate_preprocessing(X: pd.DataFrame, cfg: PreprocessingConfig) -> list[st
     return issues
 
 
+def _target_encoder(target_type: str) -> TargetEncoder:
+    """Deterministic internal cross-fitting (the `cv` argument exists from sklearn 1.9)."""
+    from sklearn.model_selection import KFold
+    try:
+        return TargetEncoder(target_type=target_type, cv=KFold(5, shuffle=True, random_state=0))
+    except TypeError:
+        return TargetEncoder(target_type=target_type, random_state=0)
+
+
 _SCALERS = {ScalingStrategy.STANDARD: StandardScaler, ScalingStrategy.MIN_MAX: MinMaxScaler,
             ScalingStrategy.ROBUST: RobustScaler}
 
@@ -340,8 +349,7 @@ def build_preprocessor(X: pd.DataFrame, cfg: PreprocessingConfig, task: TaskType
         elif strat is EncodingStrategy.FREQUENCY:
             e = FrequencyEncoder()
         else:
-            e = TargetEncoder(target_type="continuous" if task is TaskType.REGRESSION else "auto",
-                              random_state=0)
+            e = _target_encoder("continuous" if task is TaskType.REGRESSION else "auto")
         ts.append((f"encode_{strat.value}", e, cols))
     encoded = {c for cols in enc_groups.values() for c in cols}
     if cfg.scaling is not ScalingStrategy.NONE:
