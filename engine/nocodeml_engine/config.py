@@ -141,6 +141,8 @@ class SplitConfig(BaseModel):
     validation_size: float = 0.0
     n_splits: int = 5
     stratify: bool = False
+    # If set, rows are ordered by this column and holdout splits are chronological.
+    time_column: str | None = None
     random_state: int = 42
 
 
@@ -151,6 +153,9 @@ class SplitConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     model_key: str  # must match a key in MODEL_REGISTRY
+    # Model-aware regularization, e.g. {"type": "l2", "strength": 1.0}. The
+    # registry validates the type against what the model actually supports.
+    regularization: dict[str, Any] = Field(default_factory=dict)
     hyperparameters: dict[str, Any] = Field(default_factory=dict)
     use_recommended_defaults: bool = True
 
