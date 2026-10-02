@@ -107,9 +107,10 @@ def run_quality_checks(*, config: PipelineConfig, profile: DatasetProfile, plan:
             "Results come from one split and may vary with the random seed; consider k-fold.")
 
     # Temporal leakage
-    if profile.datetime and not config.split.time_column and plan.method.value != "time_series":
+    used_dt = [c for c in profile.datetime if c not in dropped_features]
+    if used_dt and not config.split.time_column and plan.method.value != "time_series":
         add("temporal_leakage", "warn", "Datetime column with random splitting",
-            f"Columns {profile.datetime} suggest time-ordered data; random splits can leak the "
+            f"Columns {used_dt} suggest time-ordered data; random splits can leak the "
             "future into training. Set a time column for a chronological split.")
 
     # Target leakage suspicion

@@ -149,9 +149,15 @@ def test_time_series_split_and_temporal_warning():
     res = run_experiment(df, cfg).result
     assert res.split["chronological"] and res.models[0].metrics["cv"]["r2"] > 0.9
     # Random split on time data should warn
-    cfg2 = cfg.model_copy(update={"split": SplitConfig()})
+    cfg2 = cfg.model_copy(update={
+        "split": SplitConfig(), "preprocessing": PreprocessingConfig(),
+        "feature_engineering": FeatureEngineeringConfig(date_features=[
+            DateFeatureRule(column="t", extract=[DateFeature.YEAR])])})
     ids = {c.id: c.status for c in run_experiment(df, cfg2).result.quality.checks}
     assert ids["temporal_leakage"] == "warn"
+    # ...but not when the datetime column is dropped entirely
+    assert "temporal_leakage" not in {c.id for c in run_experiment(df, cfg.model_copy(
+        update={"split": SplitConfig()})).result.quality.checks}
 
 
 # ---- validation -----------------------------------------------------------
