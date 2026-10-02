@@ -103,6 +103,35 @@ class ProjectService:
                                       pipeline_version=label, status=status))
         return out
 
+    def get_project(self, project_id: str) -> dict:
+        """The project row, or StorageError if it doesn't exist *or isn't yours* (same answer)."""
+        rows = self.db.table("projects").select("*").eq("id", project_id).limit(1).execute().data
+        if not rows:
+            raise StorageError("Project not found")
+        return rows[0]
+
+    def delete_project(self, project_id: str) -> None:
+        """Delete a project and every stored object that belongs to it."""
+        self.get_project(project_id)
+        for table, bucket_of in (("dataset_versions", lambda r: "datasets"),
+                                 ("artifacts", lambda r: r["bucket"])):
+            by_bucket: dict[str, list[str]] = {}
+            for r in self.db.table(table).select("*").eq("project_id", project_id).execute().data:
+                by_bucket.setdefault(bucket_of(r), []).append(r["storage_path"])
+            for bucket, paths in by_bucket.items():
+                self.db.storage.from_(bucket).remove(paths)
+        self.db.table("projects").delete().eq("id", project_id).execute()
+
+    def dataset_versions(self, dataset_id: str) -> list[dict]:
+        return (self.db.table("dataset_versions").select("*").eq("dataset_id", dataset_id)
+                .order("version").execute().data)
+
+    def list_artifacts(self, project_id: str, experiment_number: int | None = None) -> list[dict]:
+        q = self.db.table("artifacts").select("*").eq("project_id", project_id)
+        if experiment_number is not None:
+            q = q.eq("experiment_number", experiment_number)
+        return q.order("created_at").execute().data
+
     def pipelines(self, project_id: str) -> PipelineService:
         return PipelineService(SupabasePipelineRepository(self.db))
 

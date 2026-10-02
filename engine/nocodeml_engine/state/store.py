@@ -21,6 +21,9 @@ from nocodeml_engine.state.versioning import (
 from nocodeml_engine.training.runner import config_hash
 
 
+MAX_RECORD_ATTEMPTS = 5
+
+
 class PipelineError(RuntimeError):
     pass
 
@@ -160,11 +163,19 @@ class PipelineService:
         if v.config_hash != result.config_hash:
             raise PipelineError("Experiment does not match any stored pipeline version "
                                 f"(v{v.version} configuration differs from what was run)")
-        n = len(self.repo.list_experiments(result.pipeline_id)) + 1
-        e = Experiment(number=n, pipeline_id=result.pipeline_id, pipeline_version=v.version,
-                       parent_number=parent_number, result=result)
-        self.repo.save_experiment(e)
-        return e
+        # Numbers are allocated optimistically; if two runs race, the database rejects the
+        # duplicate number and we re-read and try the next one.
+        for attempt in range(MAX_RECORD_ATTEMPTS):
+            n = len(self.repo.list_experiments(result.pipeline_id)) + 1
+            e = Experiment(number=n, pipeline_id=result.pipeline_id, pipeline_version=v.version,
+                           parent_number=parent_number, result=result)
+            try:
+                self.repo.save_experiment(e)
+                return e
+            except Exception:
+                if attempt == MAX_RECORD_ATTEMPTS - 1:
+                    raise
+        raise AssertionError("unreachable")
 
     def current_experiments(self, pipeline_id: str) -> list[Experiment]:
         """Only experiments whose config matches the latest version: stale results are excluded."""

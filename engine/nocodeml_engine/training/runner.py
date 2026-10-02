@@ -23,7 +23,7 @@ from nocodeml_engine.preprocessing.engine import dropped_columns
 from nocodeml_engine.profiling import profile_dataset
 from nocodeml_engine.quality import run_quality_checks
 from nocodeml_engine.results import ExperimentResult, ModelResult
-from nocodeml_engine.splitting import SplitPlan, make_split_plan
+from nocodeml_engine.splitting import SplitPlan, make_split_plan, validate_split
 from nocodeml_engine.training.fitted import FittedPipeline, fit_pipeline, resolved_params
 
 
@@ -218,3 +218,33 @@ def run_experiment(df: pd.DataFrame, config: PipelineConfig,
         environment=environment_info(), split={**plan.summary(), "notes": plan.notes},
         preparation_log=plog.steps, models=results, quality=quality)
     return ExperimentRun(result=result, pipelines=pipelines)
+
+
+def check_config(df: pd.DataFrame, config: PipelineConfig) -> list[str]:
+    """Dry run: list every problem that would stop training, without training anything."""
+    try:
+        _validate(df, config)
+    except ConfigurationError as e:
+        return [str(e)]
+    target = config.dataset.target_column
+    task = config.dataset.task
+    prepared, _ = prepare_frame(df, config.preprocessing, target)
+    if len(prepared) == 0:
+        return ["No rows left after preprocessing."]
+    if config.split.time_column and config.split.time_column not in prepared.columns:
+        return [f"time_column '{config.split.time_column}' not found."]
+    y = prepared[target]
+    X = prepared.drop(columns=[target])
+    issues: list[str] = []
+    if task is TaskType.CLASSIFICATION and y.nunique() < 2:
+        issues.append("Classification needs at least two classes in the target.")
+    if task is TaskType.REGRESSION and not pd.api.types.is_numeric_dtype(y):
+        issues.append("Regression needs a numeric target.")
+    try:
+        issues += validate_preprocessing(
+            FeatureEngineer(config.feature_engineering).fit(X).transform(X), config.preprocessing)
+    except ValueError as e:
+        issues.append(str(e))
+    if not issues:
+        issues += validate_split(config.split, y, task)
+    return issues

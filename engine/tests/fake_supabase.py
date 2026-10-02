@@ -86,6 +86,10 @@ class _Query:
         else:
             for r in hit:
                 rows.remove(r)
+                if self.t == "projects":  # ON DELETE CASCADE
+                    for t, rs in self.c.store.tables.items():
+                        if t != "projects":
+                            rs[:] = [x for x in rs if x.get("project_id") != r["id"]]
         return SimpleNamespace(data=[copy.deepcopy(r) for r in hit])
 
 
