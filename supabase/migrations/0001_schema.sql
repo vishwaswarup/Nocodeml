@@ -195,6 +195,18 @@ create policy exp_select on public.experiments for select to authenticated using
 create policy exp_insert on public.experiments for insert to authenticated with check (public.owns_project(project_id));
 
 -- ---------------------------------------------------------------------------
+-- Privileges. Explicit and minimal, so this works whether or not the project has
+-- "automatically expose new tables" enabled. RLS above still filters every row.
+-- ---------------------------------------------------------------------------
+
+revoke all on public.projects, public.datasets, public.dataset_versions,
+              public.pipeline_versions, public.experiments, public.artifacts from anon, authenticated;
+grant select, insert, update, delete on public.projects, public.datasets,
+      public.dataset_versions, public.artifacts to authenticated;
+grant select, insert, update on public.pipeline_versions to authenticated;  -- no delete: history is kept
+grant select, insert         on public.experiments       to authenticated;  -- append-only
+
+-- ---------------------------------------------------------------------------
 -- Storage: private buckets; object path must start with the caller's user id:
 --   {user_id}/{project_id}/...
 -- ---------------------------------------------------------------------------

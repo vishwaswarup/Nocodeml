@@ -11,6 +11,6 @@ alter table storage.objects enable row level security;
 create function storage.foldername(name text) returns text[] language sql immutable as $$
   select string_to_array(name, '/') $$;
 grant usage on schema public, auth, storage to authenticated, anon;
-alter default privileges in schema public grant all on tables to authenticated;
+-- NOTE: no default privileges on purpose; the migration must grant what it needs.
 grant select on auth.users to authenticated;
 grant select, insert, update, delete on storage.objects to authenticated;

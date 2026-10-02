@@ -10,7 +10,7 @@ Everything is driven by a versioned `PipelineConfig` (`nocodeml_engine/config.py
 |---|-------|--------|
 | 1 | Core ML engine (profiler, preprocessing, FE, split, model registry, training, evaluation, quality, export) | done |
 | 2 | Pipeline state (versions, change impact/staleness, experiments, finalize, compare) | done |
-| 3 | Supabase (auth, RLS, storage, `PipelineRepository` implementation) | next |
+| 3 | Supabase (schema + RLS + storage policies, repository, project/dataset/artifact service) | done (live-project test not yet run) |
 | 4 | FastAPI (+ background training jobs) | |
 | 5 | Next.js workspace | |
 | 6 | Recommendation engine, PDF report, richer metrics | |

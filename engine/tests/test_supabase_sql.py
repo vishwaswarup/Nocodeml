@@ -96,7 +96,7 @@ def add_experiment(db, pid, n=1, v=1, h="h1", eid=None):
          " values (%s,%s,%s,%s,%s,'{}')", pid, n, eid or f"e{n}", v, h)
 
 
-def fails(db, sql, *a, match=""):
+def fails(db, sql, *a, match=None):
     with pytest.raises(psycopg.Error, match=match):
         db.q(sql, *a)
 
@@ -106,6 +106,7 @@ def test_owner_defaults_and_isolation(db, users):
     pid = new_project(db, a)
     assert db.q("select owner_id from projects where id=%s", pid)[0][0] == a
     add_version(db, pid)
+    add_experiment(db, pid)
     db.q("insert into datasets (project_id, name) values (%s,'d')", pid)
 
     db.as_user(b)  # another user sees nothing and can change nothing
@@ -121,6 +122,13 @@ def test_owner_defaults_and_isolation(db, users):
     assert db.q("select name from projects where id=%s", pid)[0][0] == "Churn"
 
 
+def test_anon_role_has_no_access(db, users):
+    new_project(db, users[0])
+    db.admin().q("set role anon")
+    fails(db, "select * from projects", match="permission denied")
+    db.admin()
+
+
 def test_unauthenticated_sees_nothing(db, users):
     pid = new_project(db, users[0])
     db.as_user(None)
@@ -133,7 +141,7 @@ def test_pipeline_version_immutability_and_finalize(db, users):
     add_version(db, pid, 1, "h1")
     fails(db, "update pipeline_versions set config='{}' where project_id=%s", pid, match="immutable")
     fails(db, "update pipeline_versions set config_hash='zz' where project_id=%s", pid, match="immutable")
-    assert db.q("delete from pipeline_versions where project_id=%s returning 1", pid) == []  # no delete policy
+    fails(db, "delete from pipeline_versions where project_id=%s", pid, match="permission denied")
 
     # finalize requires an experiment that ran this exact config
     fails(db, "update pipeline_versions set status='finalized', finalized_experiment_id='e1' "
@@ -152,8 +160,8 @@ def test_experiments_append_only_and_bound_to_config(db, users):
     fails(db, "insert into experiments (project_id, number, experiment_id, pipeline_version, config_hash, result)"
               " values (%s,1,'e1',9,'h1','{}')", pid)  # unknown version -> FK
     add_experiment(db, pid, 1, 1, "h1")
-    assert db.q("update experiments set result='{\"edited\":1}' where project_id=%s returning 1", pid) == []
-    assert db.q("delete from experiments where project_id=%s returning 1", pid) == []
+    fails(db, "update experiments set result='{}' where project_id=%s", pid, match="permission denied")
+    fails(db, "delete from experiments where project_id=%s", pid, match="permission denied")
     fails(db, "insert into experiments (project_id, number, experiment_id, pipeline_version, config_hash, result)"
               " values (%s,2,'e1',1,'h1','{}')", pid, match="unique")  # duplicate experiment_id
 
