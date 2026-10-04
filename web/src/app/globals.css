@@ -78,6 +78,11 @@
     letter-spacing: -0.02em;
     -webkit-font-smoothing: antialiased;
   }
+  /* A scroll box must also be the positioning parent of the absolutely positioned (.sr-only) text inside
+     it, otherwise that text escapes the box and widens the whole page. */
+  .overflow-x-auto, .overflow-auto {
+    position: relative;
+  }
   h1, h2, h3 {
     text-wrap: balance;
   }

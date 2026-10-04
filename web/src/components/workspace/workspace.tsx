@@ -15,7 +15,9 @@ import { DatasetSection } from "./dataset-section";
 import { PreprocessingSection } from "./preprocessing-section";
 import { ModelsSection } from "./models-section";
 import { RegularizationSection } from "./regularization-section";
+import { ResultsSection } from "../results/results-section";
 import { SplitSection } from "./split-section";
+import { TrainingSection } from "./training-section";
 import { isConfigured } from "@/lib/preprocessing";
 import { ComingNext } from "./coming-next";
 import { SECTIONS } from "./sections";
@@ -27,6 +29,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [section, setSection] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const goTo = useCallback((n: number) => { setSection(n); setNotice(null); }, []);
 
   useEffect(() => {
     let alive = true;
@@ -74,7 +77,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         <aside className="hidden w-[248px] shrink-0 border-r border-line p-3 md:block">
           <div className="sticky top-[68px]">
             <p className="px-3 pt-2 pb-3 font-mono text-[11px] tracking-[0.08em] text-fg-subtle uppercase">Pipeline</p>
-            <SectionRail items={items} onSelect={setSection} />
+            <SectionRail items={items} onSelect={goTo} />
           </div>
         </aside>
 
@@ -82,7 +85,7 @@ export function Workspace({ projectId }: { projectId: string }) {
           {/* compact section picker on small screens */}
           <div className="flex gap-1 overflow-x-auto border-b border-line px-3 py-2 md:hidden">
             {SECTIONS.map((s) => (
-              <button key={s.n} onClick={() => setSection(s.n)} aria-current={s.n === section ? "step" : undefined}
+              <button key={s.n} onClick={() => goTo(s.n)} aria-current={s.n === section ? "step" : undefined}
                 className={`shrink-0 rounded-full px-3 py-1.5 text-[13px] ${s.n === section ? "bg-fg text-on-light" : "bg-surface text-fg-muted"}`}>
                 {s.n} {s.label}
               </button>
@@ -111,13 +114,17 @@ export function Workspace({ projectId }: { projectId: string }) {
             ) : section === 0 ? (
               <DatasetSection projectId={projectId} state={state} onChanged={reload} />
             ) : section === 1 ? (
-              <PreprocessingSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
+              <PreprocessingSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
             ) : section === 3 ? (
-              <SplitSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
+              <SplitSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
             ) : section === 4 ? (
-              <ModelsSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
+              <ModelsSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
             ) : section === 5 ? (
-              <RegularizationSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
+              <RegularizationSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
+            ) : section === 6 ? (
+              <TrainingSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
+            ) : section === 7 ? (
+              <ResultsSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
             ) : (
               <ComingNext section={SECTIONS[section]} />
             )}
@@ -125,8 +132,8 @@ export function Workspace({ projectId }: { projectId: string }) {
 
           <footer className="sticky bottom-0 flex h-16 items-center justify-between border-t border-line bg-bg/85 px-4 backdrop-blur-md sm:px-8">
             <Button variant="ghost" icon={<ArrowLeft className="size-4" />} disabled={section === 0}
-              onClick={() => setSection((s) => Math.max(0, s - 1))}>Back</Button>
-            <Button disabled={!canContinue} onClick={() => setSection((s) => Math.min(SECTIONS.length - 1, s + 1))}>
+              onClick={() => goTo(Math.max(0, section - 1))}>Back</Button>
+            <Button disabled={!canContinue} onClick={() => goTo(Math.min(SECTIONS.length - 1, section + 1))}>
               Continue <ArrowRight className="size-4" />
             </Button>
           </footer>

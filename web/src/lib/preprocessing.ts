@@ -1,3 +1,4 @@
+import { sameJson } from "./canon";
 import type {
   ColumnKind, EncodingStrategy, FeatureEngineering, MissingStrategy, OutlierStrategy, PipelineConfig,
   Preprocessing, Recommendation,
@@ -22,25 +23,7 @@ export function fromConfig(c: PipelineConfig): Draft {
   };
 }
 
-/**
- * Order-independent JSON with null/undefined fields and the default n_neighbors dropped, so a draft
- * built in the browser compares equal to the same choices as echoed back by the server (which adds
- * defaults such as constant_value: null).
- */
-function canon(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(canon);
-  if (v && typeof v === "object") {
-    return Object.fromEntries(
-      Object.entries(v as Record<string, unknown>)
-        .filter(([k, x]) => x !== null && x !== undefined && !(k === "n_neighbors" && x === 5))
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, x]) => [k, canon(x)]),
-    );
-  }
-  return v;
-}
-
-export const sameDraft = (a: Draft, b: Draft) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+export const sameDraft = (a: Draft, b: Draft) => sameJson(a, b);
 
 export function isConfigured(c: PipelineConfig): boolean {
   const d = fromConfig(c);

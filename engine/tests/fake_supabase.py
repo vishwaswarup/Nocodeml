@@ -15,6 +15,19 @@ UNIQUE = {"experiments": [("project_id", "experiment_id")],
           "dataset_versions": [("storage_path",)], "artifacts": [("bucket", "storage_path")]}
 
 
+def jsonb(v):
+    """Postgres jsonb re-orders object keys: shorter keys first, then bytewise. Emulate that so tests
+    catch any code that depends on key order surviving a database round trip."""
+    if isinstance(v, dict):
+        return {k: jsonb(v[k]) for k in sorted(v, key=lambda k: (len(k.encode()), k.encode()))}
+    if isinstance(v, list):
+        return [jsonb(x) for x in v]
+    return v
+
+
+JSONB_COLUMNS = ("config", "result", "profile")
+
+
 class FakeStore:
     def __init__(self):
         self.tables = {t: [] for t in PKS}
@@ -53,6 +66,9 @@ class _Query:
             return SimpleNamespace(data=out[: self.lim] if self.lim else out)
         if self.op in ("insert", "upsert"):
             row = copy.deepcopy(self.payload)
+            for col in JSONB_COLUMNS:
+                if col in row:
+                    row[col] = jsonb(row[col])
             if self.t == "projects":
                 row.setdefault("owner_id", self.c.user_id)
                 row["updated_at"] = datetime.now(timezone.utc).isoformat()

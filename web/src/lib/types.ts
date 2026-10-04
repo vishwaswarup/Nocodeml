@@ -156,3 +156,45 @@ export type ModelConfig = {
   use_recommended_defaults: boolean;
 };
 export type ModelDefaults = Record<string, { recommended: Record<string, unknown>; defaults: Record<string, unknown>; n_rows: number; n_features: number }>;
+
+export type Job = {
+  id: string; project_id: string; status: "queued" | "running" | "succeeded" | "failed";
+  created_at: string; started_at: string | null; finished_at: string | null;
+  experiment_number: number | null; error: string | null; issues: string[]; warnings: string[];
+};
+
+/* ---- Section 7: results ---- */
+
+export type Metrics = Record<string, unknown> & {
+  confusion_matrix?: { labels: string[]; matrix: number[][] };
+  roc_curve?: { fpr: number[]; tpr: number[] };
+  actual_vs_predicted?: { actual: number[]; predicted: number[] };
+  residuals?: number[];
+};
+export type ModelResult = {
+  model_key: string; name: string; hyperparameters: Record<string, unknown>;
+  metrics: Record<string, Metrics>; fold_primary_scores: number[]; primary_metric: string;
+  baseline: Record<string, number | null>; n_rows_fitted: number; n_outlier_rows_removed: number; fit_seconds: number;
+};
+export type QualityCheck = { id: string; status: "pass" | "warn" | "fail" | "na"; title: string; detail: string; model_key: string | null };
+export type ExperimentResult = {
+  experiment_id: string; pipeline_id: string; pipeline_version: number; dataset_fingerprint: string; config_hash: string;
+  task: Task; random_state: number; started_at: string; finished_at: string; environment: Record<string, string>;
+  split: Record<string, unknown> & { mode: "holdout" | "cv"; method: string; n_folds: number; n_train: number; n_test: number };
+  preparation_log: { step: string; rows_removed: number; detail: string }[];
+  models: ModelResult[]; quality: { checks: QualityCheck[]; score: number | null };
+};
+export type ExperimentSummary = {
+  number: number; experiment_id: string; pipeline_version: number; parent_number: number | null; current: boolean;
+  finished_at: string; quality_score: number | null; models: { model_key: string; name: string; metric: string; value: number | null }[];
+};
+export type ExperimentDetail = {
+  experiment: { number: number; pipeline_version: number; parent_number: number | null; result: ExperimentResult };
+  current: boolean;
+};
+export type Artifact = { id: string; kind: string; bucket: string; storage_path: string; size_bytes: number };
+export type Comparison = {
+  a: number; b: number;
+  config_diff: { section: string; same: boolean; before: unknown; after: unknown }[];
+  metrics: Record<string, Record<string, { a: number | null; b: number | null; delta: number | null }>>;
+};

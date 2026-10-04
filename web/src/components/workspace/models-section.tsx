@@ -47,10 +47,8 @@ function Loaded({ projectId, cfg, goTo, onSaved }: {
 
   const toggle = (key: string) => setDraft((d) =>
     d.some((m) => m.model_key === key) ? d.filter((m) => m.model_key !== key) : d.length >= MAX_MODELS ? d : [...d, emptyModel(key)]);
-  const starter = () => setDraft((d) => {
-    const keep = d.filter((m) => !STARTER[task].includes(m.model_key));
-    return [...keep.filter(() => false), ...STARTER[task].map((k) => d.find((m) => m.model_key === k) ?? emptyModel(k))];
-  });
+  // Replaces the selection with the starter set, keeping settings for any model that stays selected.
+  const starter = () => setDraft((d) => STARTER[task].map((k) => d.find((m) => m.model_key === k) ?? emptyModel(k)));
 
   const save = async () => {
     setSaving(true);

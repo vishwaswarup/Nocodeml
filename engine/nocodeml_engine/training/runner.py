@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import platform
 import time
 import uuid
@@ -45,8 +46,13 @@ def dataset_fingerprint(df: pd.DataFrame) -> str:
 
 
 def config_hash(config: PipelineConfig) -> str:
-    """Hash of the configuration *content*; the version number is deliberately excluded."""
-    return hashlib.sha256(config.model_dump_json(exclude={"version"}).encode()).hexdigest()[:16]
+    """Hash of the configuration *content*.
+
+    The version number is deliberately excluded, and keys are sorted: Postgres jsonb re-orders object
+    keys, so a config must hash the same before and after a round trip through the database.
+    """
+    canonical = json.dumps(config.model_dump(mode="json", exclude={"version"}), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 def environment_info() -> dict[str, str]:

@@ -1,3 +1,4 @@
+import { sameJson } from "./canon";
 import type { PipelineConfig, Recommendation, SplitConfig, SplitMethod } from "./types";
 
 const DEFAULT: SplitConfig = {
@@ -5,7 +6,7 @@ const DEFAULT: SplitConfig = {
 };
 
 export const splitFromConfig = (c: PipelineConfig): SplitConfig => ({ ...DEFAULT, ...(c.split as Partial<SplitConfig>) });
-export const sameSplit = (a: SplitConfig, b: SplitConfig) => JSON.stringify(a) === JSON.stringify(b);
+export const sameSplit = (a: SplitConfig, b: SplitConfig) => sameJson(a, b);
 export const isCV = (m: SplitMethod) => m === "k_fold" || m === "stratified_k_fold" || m === "time_series";
 export const isHoldout = (m: SplitMethod) => !isCV(m);
 

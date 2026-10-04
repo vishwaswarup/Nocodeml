@@ -417,3 +417,21 @@ def test_model_issues_in_preview_and_active_job(env, churn_df, churn_config, mon
             break
         time.sleep(0.1)
     assert c.get(f"/projects/{pid}/training/{jid}", headers=A).json()["status"] == "succeeded"
+
+
+def test_hyperparameter_key_order_does_not_break_experiment_recording(env, churn_df, churn_config):
+    """Postgres jsonb re-orders object keys. A config with several hyperparameters/regularization keys
+    must still hash identically after the round trip, or training fails to record its experiment."""
+    c, *_ = env
+    pid, ds = setup_project(c, churn_df)
+    body = body_for(churn_config, ds["dataset_id"])
+    # keys deliberately NOT in jsonb order (jsonb sorts by length, then alphabetically)
+    body["models"] = [
+        {"model_key": "random_forest", "hyperparameters": {"n_estimators": 30, "max_depth": 3, "bootstrap": True}},
+        {"model_key": "logistic_regression", "regularization": {"type": "elasticnet", "strength": 0.5, "l1_ratio": 0.3}},
+    ]
+    c.put(f"/projects/{pid}/pipeline", json=body, headers=A)
+    job = train_and_wait(c, pid)
+    assert job["status"] == "succeeded", job
+    exp = c.get(f"/projects/{pid}/experiments", headers=A).json()
+    assert len(exp) == 1 and exp[0]["current"] is True       # and it is still recognised as current afterwards

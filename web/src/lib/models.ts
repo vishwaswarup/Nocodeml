@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { sameJson } from "./canon";
 import type { HyperParamInfo, ModelConfig, ModelInfo, Task } from "./types";
 
 const cache = new Map<Task, Promise<ModelInfo[]>>();
@@ -27,7 +28,7 @@ export const emptyModel = (key: string): ModelConfig =>
 export const asModels = (raw: unknown[]): ModelConfig[] =>
   (raw as Partial<ModelConfig>[]).map((m) => ({ ...emptyModel(m.model_key as string), ...m }));
 
-export const sameModels = (a: ModelConfig[], b: ModelConfig[]) => JSON.stringify(a) === JSON.stringify(b);
+export const sameModels = (a: ModelConfig[], b: ModelConfig[]) => sameJson(a, b);
 
 export const DESCRIPTIONS: Record<string, string> = {
   logistic_regression: "Draws a straight boundary between classes. Fast and easy to explain.",
