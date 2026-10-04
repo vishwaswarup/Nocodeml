@@ -115,13 +115,44 @@ export type Recommendation = {
   reason: string;
   confidence: number;
   action: Record<string, unknown> & { type: string };
+  optional?: boolean; // shown, but not ticked by default
 };
 
 export type DataShape = { rows: number; columns: number; missing_cells: number; missing_pct: number; duplicate_rows: number };
+export type SplitMethod = "train_test" | "train_val_test" | "k_fold" | "stratified_k_fold" | "time_series";
+export type SplitConfig = {
+  method: SplitMethod; test_size: number; validation_size: number; n_splits: number;
+  stratify: boolean; time_column: string | null; random_state: number;
+};
+export type SplitSummary = {
+  mode: "holdout" | "cv"; method: SplitMethod; stratified: boolean; chronological: boolean; n_folds: number;
+  n_train: number; n_test: number; n_validation: number; notes: string[];
+};
+
 export type Preview = {
   before: DataShape;
   after: DataShape | null;
   issues: string[];
   steps: { step: string; rows_removed: number; detail: string }[];
+  split: SplitSummary | null;
+  split_issues: string[];
+  model_issues: Record<string, string[]>;
   note?: string;
 };
+
+/* ---- Sections 4-6: models ---- */
+
+export type HyperParamInfo = {
+  name: string; kind: "int" | "float" | "choice" | "bool" | "optional_int"; default: unknown;
+  choices: unknown[]; min: number | null; max: number | null; advanced: boolean; description: string;
+};
+export type RegInfo = { kind: "penalty" | "complexity" | "none"; options: string[]; complexity_params: string[]; note: string };
+export type ModelInfo = {
+  key: string; name: string; task: Task; requires_scaling: boolean; cost: "low" | "medium" | "high";
+  interpretability: "low" | "medium" | "high"; hyperparameters: HyperParamInfo[]; regularization: RegInfo;
+};
+export type ModelConfig = {
+  model_key: string; regularization: Record<string, unknown>; hyperparameters: Record<string, unknown>;
+  use_recommended_defaults: boolean;
+};
+export type ModelDefaults = Record<string, { recommended: Record<string, unknown>; defaults: Record<string, unknown>; n_rows: number; n_features: number }>;

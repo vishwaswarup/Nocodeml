@@ -10,7 +10,7 @@ import { applyAll, bodyFor, fromConfig, sameDraft, type Draft } from "@/lib/prep
 import type { DatasetProfile, PipelineSaved, Preview, ProjectState, Recommendation, ScalingStrategy } from "@/lib/types";
 import { ColumnEditor } from "./column-editor";
 import { PreviewCard } from "./preview-card";
-import { RecommendationPanel } from "./recommendation-panel";
+import { PREPROCESSING_GROUPS, RecommendationPanel } from "./recommendation-panel";
 
 type Mode = "recommend" | "manual";
 
@@ -134,7 +134,7 @@ function Loaded({ projectId, pipeline, onSaved }: {
       <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-10">
           {mode === "recommend" && (
-            <RecommendationPanel recs={recs} error={recError} applied={applied} onApply={apply}
+            <RecommendationPanel recs={recs} error={recError} applied={applied} onApply={apply} groups={PREPROCESSING_GROUPS}
               onIgnore={() => setMode("manual")} onRetry={() => setRecKey((k) => k + 1)} />
           )}
 

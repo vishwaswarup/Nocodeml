@@ -13,6 +13,9 @@ import { api, ApiError } from "@/lib/api";
 import type { ProjectState } from "@/lib/types";
 import { DatasetSection } from "./dataset-section";
 import { PreprocessingSection } from "./preprocessing-section";
+import { ModelsSection } from "./models-section";
+import { RegularizationSection } from "./regularization-section";
+import { SplitSection } from "./split-section";
 import { isConfigured } from "@/lib/preprocessing";
 import { ComingNext } from "./coming-next";
 import { SECTIONS } from "./sections";
@@ -109,6 +112,12 @@ export function Workspace({ projectId }: { projectId: string }) {
               <DatasetSection projectId={projectId} state={state} onChanged={reload} />
             ) : section === 1 ? (
               <PreprocessingSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
+            ) : section === 3 ? (
+              <SplitSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
+            ) : section === 4 ? (
+              <ModelsSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
+            ) : section === 5 ? (
+              <RegularizationSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
             ) : (
               <ComingNext section={SECTIONS[section]} />
             )}

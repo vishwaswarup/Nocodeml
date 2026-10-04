@@ -35,7 +35,7 @@ from nocodeml_engine.persistence import ProjectService, StorageError
 from nocodeml_engine.persistence.projects import MAX_DATASET_BYTES
 from nocodeml_engine.models import get_spec
 from nocodeml_engine.preprocessing import PreprocessingError
-from nocodeml_engine.preprocessing.preview import preview_preprocessing
+from nocodeml_engine.preprocessing.preview import preview_models, preview_preprocessing
 from nocodeml_engine.models import recommended_hyperparameters
 from nocodeml_engine.preprocessing import prepare_frame
 from nocodeml_engine.recommendations import recommend_preprocessing, recommend_split
@@ -338,6 +338,12 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             "defaults": {h.name: h.default for h in get_spec(m.model_key).hyperparameters},
             "n_rows": n_rows, "n_features": n_features} for m in cfg.models}
 
+    @app.post("/projects/{project_id}/pipeline/validate-models")
+    def validate_models(body: PipelineConfigIn, ctx=Depends(project_ctx)):
+        """Instant check of each model's settings. Does not touch the dataset, so it stays fast."""
+        _, pid = ctx
+        return {"model_issues": preview_models(full_config(pid, body))}
+
     @app.post("/projects/{project_id}/pipeline/preview")
     def preview_pipeline(body: PipelineConfigIn, ctx=Depends(project_ctx)):
         """Validate an unsaved draft and show before/after data shape (preview only, nothing saved)."""
@@ -383,6 +389,11 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             return jobs.submit(pid, svc.user_id, train_job(svc, pid))
         except JobConflict as e:
             raise HTTPException(409, str(e)) from None
+
+    @app.get("/projects/{project_id}/training/active")
+    def active_training(ctx=Depends(project_ctx)):
+        svc, pid = ctx
+        return jobs.active_for(pid, svc.user_id)
 
     @app.get("/projects/{project_id}/training/{job_id}")
     def training_status(job_id: str, ctx=Depends(project_ctx)):

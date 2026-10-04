@@ -200,4 +200,20 @@ def test_preview_reports_split_sizes(messy_dups):
     out = preview_preprocessing(messy_dups, cfg)
     assert out["split"]["n_test"] == 125 and out["split"]["n_train"] == 375 and out["split"]["stratified"]
     bad = cfg.model_copy(update={"split": SplitConfig(test_size=1.5)})
-    assert preview_preprocessing(messy_dups, bad)["split"] is None
+    out = preview_preprocessing(messy_dups, bad)
+    assert out["split"] is None and any("test_size" in i for i in out["split_issues"])
+
+
+def test_split_preview_is_independent_of_preprocessing_problems(messy_dups):
+    """Raw data (unhandled NaNs, raw dates, unencoded text) must not block the split preview."""
+    cfg = make_config(TaskType.CLASSIFICATION, "churn", []).model_copy(update={"split": SplitConfig(test_size=0.2)})
+    out = preview_preprocessing(messy_dups, cfg)
+    assert out["issues"] and out["after"] is None                      # preprocessing is not ready
+    assert out["split"]["n_test"] == 103 and out["split"]["n_train"] == 412 and out["split_issues"] == []
+    # duplicates removal changes the row count the split sees
+    dedup = cfg.model_copy(update={"preprocessing": PreprocessingConfig(drop_duplicates=True)})
+    assert preview_preprocessing(messy_dups, dedup)["split"]["n_test"] == 100
+    # a real split problem is reported on its own
+    tiny = cfg.model_copy(update={"split": SplitConfig(method="stratified_k_fold", n_splits=3, stratify=True)})
+    df = messy_dups.assign(churn=[0] * (len(messy_dups) - 1) + [1])    # a class with a single row
+    assert any("Smallest class" in i for i in preview_preprocessing(df, tiny)["split_issues"])

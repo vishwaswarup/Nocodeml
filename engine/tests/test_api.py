@@ -365,6 +365,55 @@ def test_split_recommendations_model_defaults_and_split_preview(env, churn_df, c
     pv = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
     assert pv["issues"] == [] and pv["split"]["n_train"] + pv["split"]["n_test"] == 400
     body["split"] = {"method": "train_test", "test_size": 5}
-    assert c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()["issues"]
+    bad = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
+    assert bad["issues"] and bad["split"] is None and any("test_size" in i for i in bad["split_issues"])
+    # raw preprocessing (not ready) still previews the split on its own
+    body["split"] = {"method": "train_test", "test_size": 0.25}
+    body["preprocessing"] = {}
+    raw = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
+    assert raw["after"] is None and raw["split"]["n_test"] == 100 and raw["split_issues"] == []
     for path in ("pipeline/recommendations/split", "pipeline/model-defaults"):
         assert c.get(f"/projects/{pid}/{path}", headers=B).status_code == 404
+
+
+def test_model_issues_in_preview_and_active_job(env, churn_df, churn_config, monkeypatch):
+    c, *_ = env
+    pid, ds = setup_project(c, churn_df)
+    body = body_for(churn_config, ds["dataset_id"])
+    c.put(f"/projects/{pid}/pipeline", json=body, headers=A)
+    assert c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()["model_issues"] == {}
+
+    bad = dict(body, models=[
+        {"model_key": "random_forest", "regularization": {"type": "l2"}},               # L1/L2 on a tree
+        {"model_key": "knn", "hyperparameters": {"n_neighbors": 0}},                    # out of range
+        {"model_key": "logistic_regression", "regularization": {"type": "l1", "strength": -1}},  # sklearn rejects
+        {"model_key": "ridge"}, ])                                                       # wrong task
+    mi = c.post(f"/projects/{pid}/pipeline/preview", json=bad, headers=A).json()["model_issues"]
+    assert "not an L1/L2" in mi["random_forest"][0] and "within" in mi["knn"][0]
+    assert "C" in mi["logistic_regression"][0] and "does not support classification" in mi["ridge"][0]
+
+    vm = c.post(f"/projects/{pid}/pipeline/validate-models", json=bad, headers=A).json()["model_issues"]
+    assert vm == mi                                                   # same answer, without loading data
+    assert c.post(f"/projects/{pid}/pipeline/validate-models", json=body, headers=A).json() == {"model_issues": {}}
+    assert c.post(f"/projects/{pid}/pipeline/validate-models", json=bad, headers=B).status_code == 404
+
+    six = dict(body, models=[{"model_key": "random_forest"}] * 5 + [{"model_key": "knn"}])
+    c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=B)  # (foreign: 404, covered elsewhere)
+    assert c.post(f"/projects/{pid}/pipeline/preview", json=six, headers=A).status_code == 422  # schema caps at 5
+
+    # active job is visible to a re-attaching page, and only to its owner
+    assert c.get(f"/projects/{pid}/training/active", headers=A).json() is None
+    import threading
+    import nocodeml_engine.api.app as appmod
+    gate = threading.Event(); real = appmod.run_experiment
+    monkeypatch.setattr(appmod, "run_experiment", lambda *a, **k: (gate.wait(10), real(*a, **k))[1])
+    jid = c.post(f"/projects/{pid}/training", headers=A).json()["id"]
+    act = c.get(f"/projects/{pid}/training/active", headers=A).json()
+    assert act["id"] == jid and act["status"] in ("queued", "running")
+    assert c.get(f"/projects/{pid}/training/active", headers=B).status_code == 404
+    gate.set()
+    for _ in range(300):
+        if c.get(f"/projects/{pid}/training/active", headers=A).json() is None:
+            break
+        time.sleep(0.1)
+    assert c.get(f"/projects/{pid}/training/{jid}", headers=A).json()["status"] == "succeeded"

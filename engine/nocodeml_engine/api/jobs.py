@@ -80,5 +80,12 @@ class JobManager:
         j = self._jobs.get(job_id)
         return j if j and j.project_id == project_id and j.owner_id == owner_id else None
 
+    def active_for(self, project_id: str, owner_id: str) -> Job | None:
+        """The queued/running job of this project, if any (lets a reloaded page re-attach)."""
+        for j in self._jobs.values():
+            if j.project_id == project_id and j.owner_id == owner_id and j.status in ("queued", "running"):
+                return j
+        return None
+
     def shutdown(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
