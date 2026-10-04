@@ -62,8 +62,8 @@ const sample = [
 ];
 const sampleCols: Column[] = [
   { key: "customer_id", label: "customer_id", dtype: "int", numeric: true },
-  { key: "age", label: "age", dtype: "float", numeric: true },
-  { key: "income", label: "income", dtype: "float", numeric: true },
+  { key: "age", label: "age", dtype: "float", numeric: true, decimals: 1 },
+  { key: "income", label: "income", dtype: "float", numeric: true, decimals: 0 },
   { key: "gender", label: "gender", dtype: "str" },
   { key: "churn", label: "churn", dtype: "int", numeric: true },
 ];

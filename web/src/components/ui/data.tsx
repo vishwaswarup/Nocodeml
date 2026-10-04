@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { StatusIcon, type Status } from "./badge";
 
-export type Column = { key: string; label: string; dtype?: string; numeric?: boolean };
+export type Column = { key: string; label: string; dtype?: string; numeric?: boolean; decimals?: number };
 
 /** Dense, readable data table: tabular numbers, visible missing values, sortable headers. */
 export function DataTable({
@@ -64,6 +64,8 @@ export function DataTable({
                       <span className="inline-flex items-center rounded-[5px] bg-warn/10 px-1.5 font-mono text-[11px] text-warn">
                         missing
                       </span>
+                    ) : typeof v === "number" && c.decimals !== undefined ? (
+                      v.toFixed(c.decimals)
                     ) : (
                       String(v)
                     )}
@@ -82,7 +84,7 @@ export function Metric({ label, value, sub, emphasis = false }: {
   label: string; value: ReactNode; sub?: ReactNode; emphasis?: boolean;
 }) {
   return (
-    <div className="rounded-card bg-surface p-4">
+    <div className="rounded-control bg-surface-2 p-4">
       <p className="text-[13px] text-fg-muted">{label}</p>
       <p className={clsx("mt-1.5 tabular", emphasis ? "text-[32px] leading-none" : "text-[24px] leading-tight")}>{value}</p>
       {sub && <p className="mt-1.5 text-[12px] text-fg-subtle">{sub}</p>}
@@ -94,9 +96,12 @@ export function Metric({ label, value, sub, emphasis = false }: {
 export function MetricBar({ label, value, baseline }: { label: string; value: number; baseline?: number }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-baseline justify-between text-[13px]">
+      <div className="mb-1.5 flex items-baseline justify-between gap-3 text-[13px]">
         <span className="text-fg-muted">{label}</span>
-        <span className="font-mono tabular text-fg">{value.toFixed(3)}</span>
+        <span className="font-mono tabular">
+          {baseline !== undefined && <span className="mr-3 text-[11px] text-ember">baseline {baseline.toFixed(2)}</span>}
+          <span className="text-fg">{value.toFixed(3)}</span>
+        </span>
       </div>
       <div className="relative h-1.5 rounded-full bg-surface-3">
         <motion.div
@@ -107,9 +112,9 @@ export function MetricBar({ label, value, baseline }: { label: string; value: nu
         />
         {baseline !== undefined && (
           <span
-            className="absolute -top-1 h-3.5 w-px bg-ember"
-            style={{ left: `${baseline * 100}%` }}
-            title={`Baseline ${baseline.toFixed(3)}`}
+            aria-hidden
+            className="absolute -top-[5px] h-4 w-[3px] -translate-x-1/2 rounded-full bg-ember shadow-[0_0_0_2px_var(--color-surface)]"
+            style={{ left: `${Math.max(0.6, baseline * 100)}%` }}
           />
         )}
       </div>
