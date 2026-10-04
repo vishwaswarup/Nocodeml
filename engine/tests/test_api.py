@@ -99,7 +99,12 @@ def test_full_workflow(env, churn_df, churn_config):
     pid, ds = setup_project(c, churn_df)
     assert c.get("/projects", headers=A).json()[0]["status"] == "Empty"
 
-    # Section 0: viewer + profile
+    # Section 0: dataset versions, viewer + profile
+    info = c.get(f"/projects/{pid}/datasets/{ds['dataset_id']}", headers=A).json()
+    assert [v["version"] for v in info["versions"]] == [1] and info["versions"][0]["n_rows"] == 400
+    assert "profile" not in info["versions"][0]
+    assert c.get(f"/projects/{pid}/datasets/{uuid.uuid4()}", headers=A).status_code == 404
+
     page = c.get(f"/projects/{pid}/datasets/{ds['dataset_id']}/rows",
                  params={"page": 2, "page_size": 25, "sort_by": "age", "descending": True},
                  headers=A).json()
@@ -169,7 +174,7 @@ def test_other_user_gets_404_everywhere(env, churn_df, churn_config):
     probes = [("get", f"/projects/{pid}"), ("delete", f"/projects/{pid}"),
               ("get", f"/projects/{pid}/pipeline"), ("get", f"/projects/{pid}/experiments"),
               ("get", f"/projects/{pid}/experiments/1"), ("post", f"/projects/{pid}/training"),
-              ("get", f"/projects/{pid}/datasets/{d}/rows"), ("get", f"/projects/{pid}/datasets/{d}/profile"),
+              ("get", f"/projects/{pid}/datasets/{d}/rows"), ("get", f"/projects/{pid}/datasets/{d}"), ("get", f"/projects/{pid}/datasets/{d}/profile"),
               ("post", f"/projects/{pid}/pipeline/finalize"), ("get", f"/projects/{pid}/compare?a=1&b=1")]
     for method, path in probes:
         r = getattr(c, method)(path, headers=B)

@@ -211,6 +211,16 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         data = await file.read(MAX_DATASET_BYTES + 1)  # never buffer more than the limit
         return svc.add_dataset(pid, file.filename or "dataset.csv", data, target, dataset_id)
 
+    @app.get("/projects/{project_id}/datasets/{dataset_id}")
+    def dataset_info(dataset_id: UUID, ctx=Depends(project_ctx)):
+        """Versions of one dataset (metadata only; the profile has its own endpoint)."""
+        svc, pid = ctx
+        versions = [v for v in svc.dataset_versions(str(dataset_id)) if v["project_id"] == pid]
+        if not versions:
+            raise HTTPException(404, "Dataset not found.")
+        keep = ("version", "filename", "n_rows", "n_columns", "size_bytes", "created_at")
+        return {"dataset_id": str(dataset_id), "versions": [{k: v[k] for k in keep} for v in versions]}
+
     @app.get("/projects/{project_id}/datasets/{dataset_id}/profile")
     def dataset_profile(dataset_id: UUID, target: str | None = None, ctx=Depends(project_ctx)):
         svc, pid = ctx

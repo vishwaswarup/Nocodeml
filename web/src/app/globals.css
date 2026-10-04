@@ -66,6 +66,9 @@
 @layer base {
   html {
     color-scheme: dark;
+    /* Keep scrolled-to / keyboard-focused elements clear of the sticky header and action bar. */
+    scroll-padding-top: 72px;
+    scroll-padding-bottom: 88px;
   }
   body {
     background: var(--color-bg);
