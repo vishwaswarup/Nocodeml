@@ -56,11 +56,11 @@ def environment_info() -> dict[str, str]:
             "joblib": joblib.__version__}
 
 
-def _validate(df: pd.DataFrame, config: PipelineConfig) -> None:
+def _validate(df: pd.DataFrame, config: PipelineConfig, require_models: bool = True) -> None:
     target = config.dataset.target_column
     if target not in df.columns:
         raise ConfigurationError(f"Target column '{target}' not found in dataset.")
-    if not config.models:
+    if not config.models and require_models:
         raise ConfigurationError("Select at least one model.")
     if len(config.models) > MAX_MODELS:
         raise ConfigurationError(f"At most {MAX_MODELS} models can be trained at once.")
@@ -220,10 +220,13 @@ def run_experiment(df: pd.DataFrame, config: PipelineConfig,
     return ExperimentRun(result=result, pipelines=pipelines)
 
 
-def check_config(df: pd.DataFrame, config: PipelineConfig) -> list[str]:
-    """Dry run: list every problem that would stop training, without training anything."""
+def check_config(df: pd.DataFrame, config: PipelineConfig, require_models: bool = True) -> list[str]:
+    """Dry run: list every problem that would stop training, without training anything.
+
+    `require_models=False` validates a pipeline that is still being built (no models chosen yet).
+    """
     try:
-        _validate(df, config)
+        _validate(df, config, require_models)
     except ConfigurationError as e:
         return [str(e)]
     target = config.dataset.target_column

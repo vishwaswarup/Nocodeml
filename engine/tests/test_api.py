@@ -309,3 +309,62 @@ def test_experiment_number_race_is_retried(env, churn_df, churn_config):
     finally:
         Repo.save_experiment = orig_save
     assert job["status"] == "succeeded" and job["experiment_number"] == 1 and calls["n"] == 2
+
+
+# ---- Section 1: recommendations + preview ------------------------------------
+
+def test_preprocessing_recommendations_and_preview(env, churn_df, churn_config):
+    c, *_ = env
+    pid, ds = setup_project(c, churn_df)
+    assert c.get(f"/projects/{pid}/pipeline/recommendations/preprocessing", headers=A).status_code == 409
+
+    body = body_for(churn_config, ds["dataset_id"])
+    body["preprocessing"] = {}
+    body["models"] = []
+    c.put(f"/projects/{pid}/pipeline", json=body, headers=A)
+    recs = c.get(f"/projects/{pid}/pipeline/recommendations/preprocessing", headers=A).json()
+    ids = {r["id"] for r in recs}
+    assert {"drop_column:customer_id", "impute:age", "encode:gender", "scale:*"} <= ids
+    assert all(r["reason"] and r["action"]["type"] for r in recs)
+
+    # the unsaved raw draft is reported as not trainable, with reasons
+    bad = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
+    assert bad["after"] is None and any("'age' has missing" in i for i in bad["issues"])
+
+    # applying the recommendations (as the UI does) gives a valid preview
+    body["preprocessing"] = {
+        "drop_columns": ["customer_id"],
+        "missing_values": [{"column": "age", "strategy": "median"}],
+        "encoding": [{"column": "gender", "strategy": "one_hot"}], "scaling": "standard"}
+    good = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
+    assert good["issues"] == [] and good["after"]["missing_cells"] == 0
+    assert good["before"]["missing_cells"] > 0 and good["after"]["columns"] == 4  # age, income, gender_F/M
+    # previewing saves nothing
+    assert c.get(f"/projects/{pid}/pipeline", headers=A).json()["version"] == 1
+    # foreign users get 404
+    for m, path in (("get", f"/projects/{pid}/pipeline/recommendations/preprocessing"),):
+        assert getattr(c, m)(path, headers=B).status_code == 404
+    assert c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=B).status_code == 404
+
+
+def test_split_recommendations_model_defaults_and_split_preview(env, churn_df, churn_config):
+    c, *_ = env
+    pid, ds = setup_project(c, churn_df)
+    for path in ("pipeline/recommendations/split", "pipeline/model-defaults"):
+        assert c.get(f"/projects/{pid}/{path}", headers=A).status_code == 409
+    body = body_for(churn_config, ds["dataset_id"])
+    c.put(f"/projects/{pid}/pipeline", json=body, headers=A)
+
+    recs = c.get(f"/projects/{pid}/pipeline/recommendations/split", headers=A).json()
+    ids = {r["id"] for r in recs}
+    assert "split_method" in ids and all(r["reason"] and r["action"]["type"] == "split" for r in recs)
+    d = c.get(f"/projects/{pid}/pipeline/model-defaults", headers=A).json()
+    assert set(d) == {"logistic_regression", "random_forest"}
+    assert d["random_forest"]["recommended"]["n_estimators"] == 100 and d["random_forest"]["defaults"]["bootstrap"] is True
+
+    pv = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
+    assert pv["issues"] == [] and pv["split"]["n_train"] + pv["split"]["n_test"] == 400
+    body["split"] = {"method": "train_test", "test_size": 5}
+    assert c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()["issues"]
+    for path in ("pipeline/recommendations/split", "pipeline/model-defaults"):
+        assert c.get(f"/projects/{pid}/{path}", headers=B).status_code == 404

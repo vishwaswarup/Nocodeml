@@ -33,7 +33,12 @@ from nocodeml_engine.feature_engineering import FeatureEngineeringError
 from nocodeml_engine.models import MODEL_REGISTRY, ModelConfigError
 from nocodeml_engine.persistence import ProjectService, StorageError
 from nocodeml_engine.persistence.projects import MAX_DATASET_BYTES
+from nocodeml_engine.models import get_spec
 from nocodeml_engine.preprocessing import PreprocessingError
+from nocodeml_engine.preprocessing.preview import preview_preprocessing
+from nocodeml_engine.models import recommended_hyperparameters
+from nocodeml_engine.preprocessing import prepare_frame
+from nocodeml_engine.recommendations import recommend_preprocessing, recommend_split
 from nocodeml_engine.profiling import profile_dataset
 from nocodeml_engine.splitting import SplitError
 from nocodeml_engine.state import PipelineError, VersionStatus
@@ -289,6 +294,57 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         cfg = svc.pipelines(pid).latest(pid).config
         issues = check_config(load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version), cfg)
         return ValidationReport(valid=not issues, issues=issues)
+
+    @app.get("/projects/{project_id}/pipeline/recommendations/preprocessing")
+    def preprocessing_recommendations(ctx=Depends(project_ctx)):
+        """Deterministic suggestions with reasons. Nothing is applied: the UI lets the user choose."""
+        svc, pid = ctx
+        pipes = svc.pipelines(pid)
+        if not pipes.repo.list_versions(pid):
+            raise HTTPException(409, "Save a target column in the Dataset section first.")
+        cfg = pipes.latest(pid).config
+        df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
+        profile = profile_dataset(df, cfg.dataset.target_column)
+        scaling = (any(get_spec(m.model_key).requires_scaling for m in cfg.models) if cfg.models else None)
+        recs = recommend_preprocessing(profile, cfg.dataset.target_column, scaling)
+        return [r.__dict__ for r in recs]
+
+    @app.get("/projects/{project_id}/pipeline/recommendations/split")
+    def split_recommendations(ctx=Depends(project_ctx)):
+        """How to split, with reasons. `optional` ones are shown but not ticked by default."""
+        svc, pid = ctx
+        pipes = svc.pipelines(pid)
+        if not pipes.repo.list_versions(pid):
+            raise HTTPException(409, "Save a target column in the Dataset section first.")
+        cfg = pipes.latest(pid).config
+        df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
+        profile = profile_dataset(df, cfg.dataset.target_column)
+        n_rows = len(prepare_frame(df, cfg.preprocessing, cfg.dataset.target_column)[0])
+        return [r.__dict__ for r in recommend_split(profile, cfg.dataset.task, n_rows)]
+
+    @app.get("/projects/{project_id}/pipeline/model-defaults")
+    def model_defaults(ctx=Depends(project_ctx)):
+        """For each selected model: the registry defaults and the values NoCodeML would recommend."""
+        svc, pid = ctx
+        pipes = svc.pipelines(pid)
+        if not pipes.repo.list_versions(pid):
+            raise HTTPException(409, "Save a target column in the Dataset section first.")
+        cfg = pipes.latest(pid).config
+        df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
+        n_rows = len(prepare_frame(df, cfg.preprocessing, cfg.dataset.target_column)[0])
+        n_features = max(1, df.shape[1] - 1)
+        return {m.model_key: {
+            "recommended": recommended_hyperparameters(m.model_key, n_rows, n_features),
+            "defaults": {h.name: h.default for h in get_spec(m.model_key).hyperparameters},
+            "n_rows": n_rows, "n_features": n_features} for m in cfg.models}
+
+    @app.post("/projects/{project_id}/pipeline/preview")
+    def preview_pipeline(body: PipelineConfigIn, ctx=Depends(project_ctx)):
+        """Validate an unsaved draft and show before/after data shape (preview only, nothing saved)."""
+        svc, pid = ctx
+        cfg = full_config(pid, body)
+        df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
+        return preview_preprocessing(df, cfg)
 
     @app.post("/projects/{project_id}/pipeline/finalize")
     def finalize(ctx=Depends(project_ctx)):

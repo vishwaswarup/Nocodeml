@@ -21,3 +21,18 @@ export function Select({ label, hint, className, children, ...rest }:
     </div>
   );
 }
+
+/** Select for dense table cells: no visible label (aria-label instead), smaller. */
+export function CompactSelect({ label, className, children, ...rest }:
+  SelectHTMLAttributes<HTMLSelectElement> & { label: string }) {
+  return (
+    <div className={clsx("relative", className)}>
+      <select aria-label={label} {...rest}
+        className={clsx("h-8 w-full appearance-none rounded-[8px] bg-surface-2 pr-7 pl-2.5 text-[13px] ring-1 ring-line outline-none",
+          "transition-shadow focus:ring-fg/60 disabled:opacity-35", rest.value === "" ? "text-fg-subtle" : "text-fg")}>
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-3.5 -translate-y-1/2 text-fg-subtle" aria-hidden />
+    </div>
+  );
+}

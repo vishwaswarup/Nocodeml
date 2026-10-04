@@ -116,20 +116,26 @@ def datetime_stats(s: pd.Series) -> dict[str, Any]:
     return {k: _clean(v) for k, v in out.items()}
 
 
+NEAR_UNIQUE = 0.95
+
+
 def _is_identifier_like(name: str, s: pd.Series, kind: str) -> bool:
     n = s.notna().sum()
-    if n == 0 or s.nunique() != n:  # identifiers are unique per row
+    if n == 0:
         return False
+    ratio = s.nunique() / n
     if kind == "categorical":
-        return n > 1
+        return n > 1 and s.nunique() == n  # free-text identifiers are exactly unique
     if kind == "numerical":
         lowered = name.lower().replace(" ", "_")
         hinted = any(lowered == h or lowered.endswith("_" + h) or lowered.startswith(h + "_")
                      for h in ID_NAME_HINTS)
-        if hinted:
+        # A name like customer_id with (almost) one value per row. "Almost" because repeated rows
+        # in a messy dataset repeat their IDs too.
+        if hinted and ratio >= NEAR_UNIQUE:
             return True
         # monotonically increasing integers (row numbers)
-        if pd.api.types.is_integer_dtype(s) and s.is_monotonic_increasing and n > 10:
+        if ratio == 1 and pd.api.types.is_integer_dtype(s) and s.is_monotonic_increasing and n > 10:
             return True
     return False
 

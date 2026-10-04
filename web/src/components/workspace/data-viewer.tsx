@@ -26,7 +26,7 @@ export function DataViewer({ projectId, datasetId }: { projectId: string; datase
   const [desc, setDesc] = useState(false);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
-  const [data, setData] = useState<RowsPage | null>(null);
+  const [loaded, setLoaded] = useState<{ key: string; rows: RowsPage } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,16 +34,20 @@ export function DataViewer({ projectId, datasetId }: { projectId: string; datase
     return () => clearTimeout(t);
   }, [search]);
 
+  const key = JSON.stringify([page, sortBy, desc, query]);
+  const data = loaded?.rows ?? null;
+  const stale = loaded !== null && loaded.key !== key;   // showing the previous result while the next loads
+
   useEffect(() => {
     let alive = true;
     const qs = new URLSearchParams({ page: String(page), page_size: String(PAGE) });
     if (sortBy) { qs.set("sort_by", sortBy); qs.set("descending", String(desc)); }
     if (query) qs.set("search", query);
     api<RowsPage>(`/projects/${projectId}/datasets/${datasetId}/rows?${qs}`)
-      .then((d) => { if (alive) { setData(d); setError(null); } })
+      .then((d) => { if (alive) { setLoaded({ key, rows: d }); setError(null); } })
       .catch((e: Error) => { if (alive) setError(e.message); });
     return () => { alive = false; };
-  }, [projectId, datasetId, page, sortBy, desc, query]);
+  }, [projectId, datasetId, page, sortBy, desc, query, key]);
 
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE)) : 1;
 
@@ -70,6 +74,7 @@ export function DataViewer({ projectId, datasetId }: { projectId: string; datase
       {error ? <ErrorState title="Couldn't load rows" body={error} />
         : !data ? <Skeleton className="h-[420px] rounded-card" />
         : (
+          <div className={`transition-opacity duration-150 ${stale ? "pointer-events-none opacity-50" : ""}`} aria-busy={stale}>
           <DataTable
             caption="Raw dataset rows"
             columns={data.columns.map((c) => ({ key: c.name, label: c.name, dtype: c.dtype.replace("64", "").replace("datetime[us]", "datetime"), numeric: numeric(c.dtype) }))}
@@ -82,6 +87,7 @@ export function DataViewer({ projectId, datasetId }: { projectId: string; datase
             descending={desc}
             onSort={(k) => { if (k === sortBy) setDesc(!desc); else { setSortBy(k); setDesc(false); } setPage(1); }}
           />
+          </div>
         )}
     </div>
   );

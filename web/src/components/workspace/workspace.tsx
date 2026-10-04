@@ -12,6 +12,8 @@ import { SectionRail, type SectionItem } from "@/components/ui/section-rail";
 import { api, ApiError } from "@/lib/api";
 import type { ProjectState } from "@/lib/types";
 import { DatasetSection } from "./dataset-section";
+import { PreprocessingSection } from "./preprocessing-section";
+import { isConfigured } from "@/lib/preprocessing";
 import { ComingNext } from "./coming-next";
 import { SECTIONS } from "./sections";
 
@@ -21,6 +23,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
   const [section, setSection] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -40,9 +43,12 @@ export function Workspace({ projectId }: { projectId: string }) {
   const items: SectionItem[] = SECTIONS.map((s) => ({
     n: s.n,
     label: s.label,
-    state: s.n === section ? "current" : s.n === 0 && hasPipeline ? "done" : "todo",
+    state: s.n === section ? "current"
+      : s.n === 0 && hasPipeline ? "done"
+      : s.n === 1 && state?.pipeline && isConfigured(state.pipeline.config) ? "done" : "todo",
   }));
   const canContinue = section === 0 ? hasPipeline : section < SECTIONS.length - 1;
+  const saved = useCallback((msg?: string) => { setNotice(msg ?? null); reload(); }, [reload]);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -81,6 +87,12 @@ export function Workspace({ projectId }: { projectId: string }) {
           </div>
 
           <main className="flex-1 px-4 py-8 sm:px-8 lg:px-12">
+            {notice && (
+              <div role="status" className="mx-auto mb-6 flex max-w-[1180px] items-start justify-between gap-4 rounded-card bg-surface px-4 py-3 text-[14px] text-fg-muted ring-1 ring-line">
+                <span>{notice}</span>
+                <button onClick={() => setNotice(null)} className="shrink-0 text-fg-subtle hover:text-fg" aria-label="Dismiss">Dismiss</button>
+              </div>
+            )}
             {error ? (
               <div className="mx-auto max-w-xl pt-10">
                 <ErrorState title={error.status === 404 ? "Project not found" : "Couldn't load this project"}
@@ -95,6 +107,8 @@ export function Workspace({ projectId }: { projectId: string }) {
               </div>
             ) : section === 0 ? (
               <DatasetSection projectId={projectId} state={state} onChanged={reload} />
+            ) : section === 1 ? (
+              <PreprocessingSection projectId={projectId} state={state} goTo={setSection} onSaved={saved} />
             ) : (
               <ComingNext section={SECTIONS[section]} />
             )}
