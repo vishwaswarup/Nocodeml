@@ -23,7 +23,7 @@ def feat_df():
         "income": rng.lognormal(10, 1.1, n),                       # strongly right-skewed, positive
         "balance": rng.normal(0, 500, n),                          # symmetric, has negatives
         "age": rng.normal(40, 10, n),
-        "opened": pd.date_range("2022-01-01 00:00", periods=n, freq="7h"),   # >1 year, with times of day
+        "opened": pd.date_range("2022-01-01 00:00", periods=n, freq="31h"),   # >1 year, with varying times of day
         "day_only": pd.date_range("2024-01-01", periods=n, freq="D"),         # dates without times
         "short": pd.date_range("2024-06-01", periods=n, freq="1min"),         # a single day span
         "y": rng.integers(0, 2, n),
@@ -88,7 +88,7 @@ def test_preview_lists_new_columns_with_samples_and_every_problem(feat_df):
     log = new[0]
     assert log["source"] == "income" and log["op"] == "log" and len(log["sample"]) == 5
     assert log["sample"][0] == pytest.approx(float(np.log1p(feat_df["income"].iloc[0])), abs=1e-3)
-    assert new[2]["sample"][:2] == [0.0, 7.0]                                                     # 7-hourly timestamps
+    assert new[2]["sample"][:2] == [0.0, 7.0]                                                     # 31-hourly timestamps: 00:00, 07:00
 
     # all problems are reported together, independently of preprocessing being ready
     bad = make_config(TaskType.CLASSIFICATION, "y", [], feature_engineering=FeatureEngineeringConfig(

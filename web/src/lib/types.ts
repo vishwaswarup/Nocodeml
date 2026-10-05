@@ -48,7 +48,7 @@ export type ColumnProfile = {
   mean?: number; median?: number; min?: number | string; max?: number | string; std?: number;
   skewness?: number; outlier_count?: number;
   mode?: string | number | null; cardinality?: number; frequencies?: Record<string, number>;
-  range_days?: number; inferred_frequency?: string | null;
+  range_days?: number; inferred_frequency?: string | null; has_time?: boolean;
 };
 
 export type ProfileWarning = { code: string; severity: string; column: string | null; message: string };
@@ -105,7 +105,8 @@ export type Preprocessing = {
 };
 
 export type DateRule = { column: string; extract: string[] };
-export type FeatureEngineering = { numeric_transforms: { column: string; transform: string }[]; date_features: DateRule[] };
+export type NumericRule = { column: string; transform: string };
+export type FeatureEngineering = { numeric_transforms: NumericRule[]; date_features: DateRule[] };
 
 export type Recommendation = {
   id: string;
@@ -137,6 +138,8 @@ export type Preview = {
   split: SplitSummary | null;
   split_issues: string[];
   model_issues: Record<string, string[]>;
+  features: NewFeature[];
+  feature_issues: string[];
   note?: string;
 };
 
@@ -198,3 +201,7 @@ export type Comparison = {
   config_diff: { section: string; same: boolean; before: unknown; after: unknown }[];
   metrics: Record<string, Record<string, { a: number | null; b: number | null; delta: number | null }>>;
 };
+
+/* ---- Section 2: features ---- */
+
+export type NewFeature = { name: string; source: string; op: string; sample: (number | string | null)[] };

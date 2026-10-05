@@ -19,7 +19,8 @@ import { ResultsSection } from "../results/results-section";
 import { SplitSection } from "./split-section";
 import { TrainingSection } from "./training-section";
 import { isConfigured } from "@/lib/preprocessing";
-import { ComingNext } from "./coming-next";
+import { FeaturesSection } from "./features-section";
+import { isFeatConfigured } from "@/lib/features";
 import { SECTIONS } from "./sections";
 
 export function Workspace({ projectId }: { projectId: string }) {
@@ -51,7 +52,8 @@ export function Workspace({ projectId }: { projectId: string }) {
     label: s.label,
     state: s.n === section ? "current"
       : s.n === 0 && hasPipeline ? "done"
-      : s.n === 1 && state?.pipeline && isConfigured(state.pipeline.config) ? "done" : "todo",
+      : s.n === 1 && state?.pipeline && isConfigured(state.pipeline.config) ? "done"
+      : s.n === 2 && state?.pipeline && isFeatConfigured(state.pipeline.config) ? "done" : "todo",
   }));
   const canContinue = section === 0 ? hasPipeline : section < SECTIONS.length - 1;
   const saved = useCallback((msg?: string) => { setNotice(msg ?? null); reload(); }, [reload]);
@@ -115,6 +117,8 @@ export function Workspace({ projectId }: { projectId: string }) {
               <DatasetSection projectId={projectId} state={state} onChanged={reload} />
             ) : section === 1 ? (
               <PreprocessingSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
+            ) : section === 2 ? (
+              <FeaturesSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
             ) : section === 3 ? (
               <SplitSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
             ) : section === 4 ? (
@@ -125,9 +129,7 @@ export function Workspace({ projectId }: { projectId: string }) {
               <TrainingSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
             ) : section === 7 ? (
               <ResultsSection projectId={projectId} state={state} goTo={goTo} onSaved={saved} />
-            ) : (
-              <ComingNext section={SECTIONS[section]} />
-            )}
+            ) : null}
           </main>
 
           <footer className="sticky bottom-0 flex h-16 items-center justify-between border-t border-line bg-bg/85 px-4 backdrop-blur-md sm:px-8">

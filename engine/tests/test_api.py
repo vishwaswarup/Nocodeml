@@ -479,3 +479,27 @@ def test_pdf_report_generation_storage_and_access(env, churn_df, churn_config):
     assert c.post(f"/projects/{pid}/experiments/1/report", headers=B).status_code == 404
     assert c.post(f"/projects/{pid}/experiments/99/report", headers=A).status_code == 404
     assert c.post(f"/projects/{pid}/experiments/1/report").status_code == 401
+
+
+def test_feature_recommendations_and_preview_over_http(env, churn_df, churn_config):
+    c, *_ = env
+    pid, ds = setup_project(c, churn_df)
+    assert c.get(f"/projects/{pid}/pipeline/recommendations/features", headers=A).status_code == 409
+    body = body_for(churn_config, ds["dataset_id"])
+    c.put(f"/projects/{pid}/pipeline", json=body, headers=A)
+
+    recs = c.get(f"/projects/{pid}/pipeline/recommendations/features", headers=A).json()
+    inc = next(r for r in recs if r["id"] == "numeric_transform:income")
+    assert inc["action"]["transform"] == "log" and "skewness" in inc["reason"]
+    assert "numeric_transform:customer_id" not in {r["id"] for r in recs}      # identifier is dropped in preprocessing
+
+    body["feature_engineering"] = {"numeric_transforms": [{"column": "income", "transform": "log"}], "date_features": []}
+    pv = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
+    assert [f["name"] for f in pv["features"]] == ["income__log"] and pv["feature_issues"] == []
+    assert len(pv["features"][0]["sample"]) == 5
+
+    body["feature_engineering"] = {"numeric_transforms": [{"column": "age", "transform": "log"}],
+                                   "date_features": [{"column": "gender", "extract": ["year"]}]}
+    bad = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
+    assert bad["features"] == [] and any("does not look like a date" in i for i in bad["feature_issues"])
+    assert c.get(f"/projects/{pid}/pipeline/recommendations/features", headers=B).status_code == 404

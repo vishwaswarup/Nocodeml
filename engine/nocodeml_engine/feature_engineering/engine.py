@@ -54,6 +54,9 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
             if not rule.extract:
                 raise FeatureEngineeringError(f"Choose at least one date part to extract from '{rule.column}'.")
             col = X[rule.column]
+            if pd.api.types.is_numeric_dtype(col) or pd.api.types.is_bool_dtype(col):
+                # pandas would "parse" 1.0, 2.0 as nanoseconds since 1970; numbers are never dates here
+                raise FeatureEngineeringError(f"'{rule.column}' does not look like a date column, so date parts can't be extracted.")
             if not pd.api.types.is_datetime64_any_dtype(col):
                 vals = col.dropna()
                 parsed = pd.to_datetime(vals, errors="coerce", format="mixed") if len(vals) else vals
