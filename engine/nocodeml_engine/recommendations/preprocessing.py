@@ -12,7 +12,7 @@ from typing import Any
 
 from nocodeml_engine.config import (
     DateFeature, DateFeatureRule, EncodingRule, EncodingStrategy, MissingValueRule,
-    MissingValueStrategy, OutlierRule, OutlierStrategy, PipelineConfig, ScalingStrategy,
+    MissingValueStrategy, NumericFeatureRule, NumericTransform, OutlierRule, OutlierStrategy, PipelineConfig, ScalingStrategy,
 )
 from nocodeml_engine.profiling.profiler import DatasetProfile
 
@@ -79,9 +79,12 @@ def recommend_preprocessing(profile: DatasetProfile, target: str,
         kind = s["kind"]
         miss = s["missing_pct"]
         if kind == "datetime":
-            add("date_features", c, f"Extract year, month and weekday from '{c}'",
-                f"Models can't use raw dates. Year, month and weekday capture trend and seasonality instead.",
-                0.8, {"type": "date_features", "column": c, "extract": ["year", "month", "day_of_week"]})
+            from nocodeml_engine.recommendations.features import date_parts_for
+            parts = date_parts_for(s)
+            names = ", ".join(x.replace("_", " ") for x in parts)
+            add("date_features", c, f"Extract {names} from '{c}'",
+                "Models can't use raw dates. The date parts capture trend, seasonality and weekday patterns instead.",
+                0.8, {"type": "date_features", "column": c, "extract": parts})
             continue
         if kind == "numerical":
             out_share = (s.get("outlier_count") or 0) / max(s["count"], 1)
@@ -160,6 +163,9 @@ def apply_actions(config: PipelineConfig, actions: list[dict[str, Any]]) -> Pipe
                 column=a["column"], strategy=OutlierStrategy(a["strategy"]), threshold=a.get("threshold", 1.5)))
         elif t == "scale":
             pre.scaling = ScalingStrategy(a["strategy"])
+        elif t == "numeric_transform":
+            fe.numeric_transforms = [r for r in fe.numeric_transforms if not (r.column == a["column"] and r.transform.value == a["transform"])] + [
+                NumericFeatureRule(column=a["column"], transform=NumericTransform(a["transform"]))]
         elif t == "date_features":
             fe.date_features = [r for r in fe.date_features if r.column != a["column"]] + [
                 DateFeatureRule(column=a["column"], extract=[DateFeature(x) for x in a["extract"]])]

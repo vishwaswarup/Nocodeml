@@ -105,6 +105,7 @@ class DateFeature(str, Enum):
     DAY_OF_WEEK = "day_of_week"
     QUARTER = "quarter"
     IS_WEEKEND = "is_weekend"
+    HOUR = "hour"
 
 
 class NumericFeatureRule(BaseModel):

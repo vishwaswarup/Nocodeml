@@ -51,6 +51,14 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         for rule in cfg.date_features:
             if rule.column not in X.columns:
                 raise FeatureEngineeringError(f"Column '{rule.column}' not found.")
+            if not rule.extract:
+                raise FeatureEngineeringError(f"Choose at least one date part to extract from '{rule.column}'.")
+            col = X[rule.column]
+            if not pd.api.types.is_datetime64_any_dtype(col):
+                vals = col.dropna()
+                parsed = pd.to_datetime(vals, errors="coerce", format="mixed") if len(vals) else vals
+                if len(vals) == 0 or parsed.notna().mean() < 0.95:
+                    raise FeatureEngineeringError(f"'{rule.column}' does not look like a date column, so date parts can't be extracted.")
         self.feature_names_in_ = list(X.columns)
         return self
 
@@ -79,6 +87,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
                     DateFeature.DAY_OF_WEEK: d.dt.dayofweek,
                     DateFeature.QUARTER: d.dt.quarter,
                     DateFeature.IS_WEEKEND: (d.dt.dayofweek >= 5).astype(float).where(d.notna()),
+                    DateFeature.HOUR: d.dt.hour,
                 }[f]
                 X[date_feature_name(rule.column, f)] = val.astype(float)
             X = X.drop(columns=[rule.column])

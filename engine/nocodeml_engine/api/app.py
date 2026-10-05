@@ -12,13 +12,14 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Callable
 from uuid import UUID
 
 import pandas as pd
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import JSONResponse
@@ -38,7 +39,8 @@ from nocodeml_engine.preprocessing import PreprocessingError
 from nocodeml_engine.preprocessing.preview import preview_models, preview_preprocessing
 from nocodeml_engine.models import recommended_hyperparameters
 from nocodeml_engine.preprocessing import prepare_frame
-from nocodeml_engine.recommendations import recommend_preprocessing, recommend_split
+from nocodeml_engine.recommendations import recommend_features, recommend_preprocessing, recommend_split
+from nocodeml_engine.reports import ReportContext, build_report
 from nocodeml_engine.profiling import profile_dataset
 from nocodeml_engine.splitting import SplitError
 from nocodeml_engine.state import PipelineError, VersionStatus
@@ -79,6 +81,7 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
                max_workers: int = 2) -> FastAPI:
     jobs = JobManager(max_workers=max_workers)
     cache = DataFrameCache()
+    report_slots = threading.BoundedSemaphore(2)  # PDF rendering is CPU/memory heavy: at most 2 at once
 
     @asynccontextmanager
     async def lifespan(app):
@@ -322,6 +325,18 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         n_rows = len(prepare_frame(df, cfg.preprocessing, cfg.dataset.target_column)[0])
         return [r.__dict__ for r in recommend_split(profile, cfg.dataset.task, n_rows)]
 
+    @app.get("/projects/{project_id}/pipeline/recommendations/features")
+    def feature_recommendations(ctx=Depends(project_ctx)):
+        """Feature-engineering suggestions with reasons (log of skewed columns, date parts)."""
+        svc, pid = ctx
+        pipes = svc.pipelines(pid)
+        if not pipes.repo.list_versions(pid):
+            raise HTTPException(409, "Save a target column in the Dataset section first.")
+        cfg = pipes.latest(pid).config
+        df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
+        profile = profile_dataset(df, cfg.dataset.target_column)
+        return [r.__dict__ for r in recommend_features(profile, cfg.dataset.target_column, cfg.preprocessing.drop_columns)]
+
     @app.get("/projects/{project_id}/pipeline/model-defaults")
     def model_defaults(ctx=Depends(project_ctx)):
         """For each selected model: the registry defaults and the values NoCodeML would recommend."""
@@ -439,6 +454,48 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     def compare(a: int, b: int, ctx=Depends(project_ctx)):
         svc, pid = ctx
         return svc.pipelines(pid).compare(pid, a, b)
+
+    @app.post("/projects/{project_id}/experiments/{number}/report")
+    def create_report(number: int, response: Response, force: bool = False, ctx=Depends(project_ctx)):
+        """Generate (or return the existing) PDF report for an experiment. Deterministic, template-based."""
+        svc, pid = ctx
+        pipes = svc.pipelines(pid)
+        exp = next((e for e in pipes.repo.list_experiments(pid) if e.number == number), None)
+        if exp is None:
+            raise HTTPException(404, "Experiment not found.")
+
+        def existing():
+            return next((a for a in svc.list_artifacts(pid, number) if a["kind"] == "report"), None)
+
+        found = existing()
+        if found and not force:
+            return found
+        if not report_slots.acquire(timeout=30):
+            raise HTTPException(503, "The server is busy generating other reports. Try again in a moment.")
+        try:
+            version = pipes.repo.get_version(pid, exp.pipeline_version)
+            cfg = version.config
+            df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
+            ds_row = next((v for v in svc.dataset_versions(cfg.dataset.dataset_id) if v["version"] == cfg.dataset.version), None)
+            label = f"v{version.version}.0 (finalized)" if version.status == VersionStatus.FINALIZED else f"v{version.version}"
+            pdf = build_report(ReportContext(
+                project_name=svc.get_project(pid)["name"], experiment_number=number, result=exp.result, config=cfg,
+                pipeline_label=label, dataset_filename=(ds_row or {}).get("filename", "dataset.csv"),
+                dataset_version=cfg.dataset.version, profile=profile_dataset(df, cfg.dataset.target_column).to_dict(),
+                current=pipes.is_current(exp)))
+        finally:
+            report_slots.release()
+        if found:  # force: replace
+            svc.delete_artifact(found["id"])
+        try:
+            row = svc.save_artifact_bytes(pid, number, f"report_exp{number}.pdf", pdf, "report", "reports", "application/pdf")
+        except Exception:
+            again = existing()  # lost a race with a concurrent request: that one wins
+            if again:
+                return again
+            raise
+        response.status_code = 201
+        return row
 
     @app.get("/projects/{project_id}/experiments/{number}/artifacts")
     def experiment_artifacts(number: int, ctx=Depends(project_ctx)):

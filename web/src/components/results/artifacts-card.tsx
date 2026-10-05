@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, ShieldAlert } from "lucide-react";
+import { Download, FileText, RefreshCw, ShieldAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -13,6 +13,7 @@ export function ArtifactsCard({ projectId, number }: { projectId: string; number
   const [items, setItems] = useState<Artifact[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [making, setMaking] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -35,11 +36,48 @@ export function ArtifactsCard({ projectId, number }: { projectId: string; number
     }
   };
 
-  const shown = (items ?? []).filter((a) => a.storage_path.split("/").pop() !== "SECURITY.txt");
+  const report = (items ?? []).find((a) => a.kind === "report");
+
+  /** Create the PDF (or replace it) and open it. Reports are built from stored results, never by an AI. */
+  const makeReport = async (force: boolean) => {
+    setMaking(true);
+    setError(null);
+    try {
+      const a = await api<Artifact>(`/projects/${projectId}/experiments/${number}/report${force ? "?force=true" : ""}`, { method: "POST" });
+      setItems(await api<Artifact[]>(`/projects/${projectId}/experiments/${number}/artifacts`));
+      await download(a);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setMaking(false);
+    }
+  };
+
+  const shown = (items ?? []).filter((a) => a.kind !== "report" && a.storage_path.split("/").pop() !== "SECURITY.txt");
   return (
     <Card className="p-6">
-      <p className="text-h3">Download</p>
-      <p className="mt-1 text-[13px] text-fg-muted">The full pipeline (preprocessing + model) takes raw rows and returns predictions.</p>
+      <p className="text-h3">Report and files</p>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-control bg-surface-2 p-3.5">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-[14px]"><FileText className="size-4 text-fg-muted" aria-hidden /> PDF report</p>
+          <p className="mt-0.5 text-[12px] text-fg-subtle">
+            {report ? `${bytes(report.size_bytes)} · ready` : "Dataset, every setting, metrics, charts and health checks in one document."}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {report ? (
+            <>
+              <Button size="sm" variant="ghost" loading={making} icon={<RefreshCw className="size-3.5" />} onClick={() => makeReport(true)}>Regenerate</Button>
+              <Button size="sm" loading={busy === report.id} icon={<Download className="size-3.5" />} onClick={() => download(report)}>Download report</Button>
+            </>
+          ) : (
+            <Button size="sm" loading={making} disabled={items === null} icon={<FileText className="size-3.5" />} onClick={() => makeReport(false)}>
+              {making ? "Generating…" : "Generate PDF report"}
+            </Button>
+          )}
+        </div>
+      </div>
+      <p className="mt-5 text-[13px] text-fg-muted">The full pipeline (preprocessing + model) takes raw rows and returns predictions.</p>
       {error && <p role="alert" className="mt-3 text-[13px] text-fail">{error}</p>}
       <ul className="mt-3 divide-y divide-line">
         {items === null ? <li className="py-3 text-[13px] text-fg-subtle">Loading…</li>

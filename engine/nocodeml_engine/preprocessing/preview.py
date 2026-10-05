@@ -11,8 +11,9 @@ from typing import Any
 
 import pandas as pd
 
-from nocodeml_engine.config import PipelineConfig, TaskType
+from nocodeml_engine.config import FeatureEngineeringConfig, PipelineConfig, TaskType
 from nocodeml_engine.feature_engineering import FeatureEngineer
+from nocodeml_engine.feature_engineering import FeatureEngineer, FeatureEngineeringError
 from nocodeml_engine.models import MAX_MODELS, ModelConfigError, build_estimator
 from nocodeml_engine.preprocessing.engine import build_preprocessor, prepare_frame
 from nocodeml_engine.splitting import make_split_plan, validate_split
@@ -51,6 +52,47 @@ def preview_split(df: pd.DataFrame, config: PipelineConfig) -> tuple[dict[str, A
     return {**plan.summary(), "notes": plan.notes}, []
 
 
+def _safe(v: Any) -> Any:
+    if v is None or (isinstance(v, float) and v != v):
+        return None
+    if isinstance(v, float):
+        return round(v, 4)
+    return v.item() if hasattr(v, "item") else v
+
+
+def preview_features(df: pd.DataFrame, config: PipelineConfig) -> tuple[list[dict[str, Any]], list[str]]:
+    """Which columns the feature-engineering rules would add, with sample values.
+
+    Every rule is checked on its own so all problems are reported together, not one at a time.
+    Independent of preprocessing validity (it only needs the row-prepared data).
+    """
+    target = config.dataset.target_column
+    if target not in df.columns:
+        return [], [f"Target column '{target}' not found in dataset."]
+    prepared, _ = prepare_frame(df, config.preprocessing, target)
+    X = prepared.drop(columns=[target])
+    fe = config.feature_engineering
+    issues: list[str] = []
+    for rule in fe.numeric_transforms:
+        try:
+            FeatureEngineer(FeatureEngineeringConfig(numeric_transforms=[rule])).fit(X)
+        except FeatureEngineeringError as e:
+            issues.append(str(e))
+    for rule in fe.date_features:
+        try:
+            FeatureEngineer(FeatureEngineeringConfig(date_features=[rule])).fit(X)
+        except FeatureEngineeringError as e:
+            issues.append(str(e))
+    if issues:
+        return [], issues
+    sample = FeatureEngineer(fe).fit(X).transform(X.head(500))
+    origin = {f"{r.column}__{r.transform.value}": (r.column, r.transform.value) for r in fe.numeric_transforms}
+    origin.update({f"{r.column}__{p.value}": (r.column, p.value) for r in fe.date_features for p in r.extract})
+    new = [c for c in sample.columns if c not in X.columns]
+    return [{"name": c, "source": origin.get(c, (c, ""))[0], "op": origin.get(c, (c, ""))[1],
+             "sample": [_safe(v) for v in sample[c].head(5)]} for c in new], []
+
+
 def preview_models(config: PipelineConfig) -> dict[str, list[str]]:
     """Problems with each selected model's settings (key -> messages). Instantiates the estimator,
     so incompatible combinations are caught here instead of at training time."""
@@ -74,10 +116,12 @@ def preview_preprocessing(df: pd.DataFrame, config: PipelineConfig) -> dict[str,
     before = _shape(df)
     split, split_issues = preview_split(df, config)
     model_issues = preview_models(config)
+    features, feature_issues = preview_features(df, config)
     issues = check_config(df, config, require_models=False)
     if issues:
         return {"before": before, "after": None, "issues": issues, "steps": [],
-                "split": split, "split_issues": split_issues, "model_issues": model_issues}
+                "split": split, "split_issues": split_issues, "model_issues": model_issues,
+                "features": features, "feature_issues": feature_issues}
     target = config.dataset.target_column
     prepared, log = prepare_frame(df, config.preprocessing, target)
     X, y = prepared.drop(columns=[target]), prepared[target]
@@ -89,5 +133,5 @@ def preview_preprocessing(df: pd.DataFrame, config: PipelineConfig) -> dict[str,
     after["rows"] = int(len(prepared))
     after["duplicate_rows"] = int(prepared.duplicated().sum())
     return {"before": before, "after": after, "issues": [], "steps": log.steps, "split": split,
-            "split_issues": split_issues, "model_issues": model_issues,
+            "split_issues": split_issues, "model_issues": model_issues, "features": features, "feature_issues": feature_issues,
             "note": "Preview fits on the full dataset to count columns. Training fits on training rows only."}

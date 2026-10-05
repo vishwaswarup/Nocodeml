@@ -105,7 +105,8 @@ def datetime_stats(s: pd.Series) -> dict[str, Any]:
     out: dict[str, Any] = {"count": int(len(x)), "missing_pct": round(100 * (n - len(x)) / n, 2) if n else 0.0,
                            "unique": int(s.nunique())}
     if not x.empty:
-        out.update(min=x.min(), max=x.max(), range_days=(x.max() - x.min()).days)
+        out.update(min=x.min(), max=x.max(), range_days=(x.max() - x.min()).days,
+                   has_time=bool(((x.dt.hour != 0) | (x.dt.minute != 0)).any()))
         freq = None
         if len(x) >= 3:
             try:

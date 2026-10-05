@@ -223,6 +223,26 @@ class ProjectService:
                 "sha256": hashlib.sha256(data).hexdigest()}).execute().data[0])
         return out
 
+    def save_artifact_bytes(self, project_id: str, experiment_number: int, name: str, data: bytes,
+                            kind: str, bucket: str, content_type: str | None = None) -> dict:
+        """Store one generated file (e.g. a PDF report) and register it as an artifact."""
+        path = f"{self.user_id}/{project_id}/exp{experiment_number}/{name}"
+        self.db.storage.from_(bucket).upload(path, data, {"content-type": content_type} if content_type else None)
+        try:
+            return self.db.table("artifacts").insert({
+                "project_id": project_id, "experiment_number": experiment_number, "kind": kind, "bucket": bucket,
+                "storage_path": path, "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}).execute().data[0]
+        except Exception:
+            self.db.storage.from_(bucket).remove([path])  # no orphaned object
+            raise
+
+    def delete_artifact(self, artifact_id: str) -> None:
+        rows = self.db.table("artifacts").select("*").eq("id", artifact_id).limit(1).execute().data
+        if not rows:
+            return
+        self.db.storage.from_(rows[0]["bucket"]).remove([rows[0]["storage_path"]])
+        self.db.table("artifacts").delete().eq("id", artifact_id).execute()
+
     def download_artifact(self, artifact_id: str) -> bytes:
         rows = self.db.table("artifacts").select("*").eq("id", artifact_id).limit(1).execute().data
         if not rows:

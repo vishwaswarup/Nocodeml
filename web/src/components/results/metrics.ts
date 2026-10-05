@@ -29,5 +29,5 @@ export const num = (v: unknown): number | null => (typeof v === "number" && Numb
 export const f3 = (v: unknown) => (num(v) === null ? "–" : (v as number).toFixed(3));
 
 export const KIND_LABEL: Record<string, string> = {
-  pipeline: "Full pipeline", model: "Model only", configuration: "Configuration", metrics: "Metrics & record", other: "Notes",
+  pipeline: "Full pipeline", model: "Model only", configuration: "Configuration", metrics: "Metrics & record", report: "PDF report", other: "Notes",
 };

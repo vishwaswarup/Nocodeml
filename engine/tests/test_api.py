@@ -435,3 +435,47 @@ def test_hyperparameter_key_order_does_not_break_experiment_recording(env, churn
     assert job["status"] == "succeeded", job
     exp = c.get(f"/projects/{pid}/experiments", headers=A).json()
     assert len(exp) == 1 and exp[0]["current"] is True       # and it is still recognised as current afterwards
+
+
+def test_pdf_report_generation_storage_and_access(env, churn_df, churn_config):
+    import io as _io
+    from pypdf import PdfReader
+    c, store, _ = env
+    pid, ds = setup_project(c, churn_df)
+    c.put(f"/projects/{pid}/pipeline", json=body_for(churn_config, ds["dataset_id"]), headers=A)
+    assert c.post(f"/projects/{pid}/experiments/1/report", headers=A).status_code == 404     # nothing trained yet
+    train_and_wait(c, pid)
+
+    r = c.post(f"/projects/{pid}/experiments/1/report", headers=A)
+    assert r.status_code == 201, r.text
+    art = r.json()
+    assert art["kind"] == "report" and art["bucket"] == "reports" and art["storage_path"].endswith("report_exp1.pdf")
+    pdf = store.objects[("reports", art["storage_path"])]
+    assert pdf.startswith(b"%PDF") and art["size_bytes"] == len(pdf)
+    text = "\n".join(p.extract_text() for p in PdfReader(_io.BytesIO(pdf)).pages)
+    assert "Churn" in text and "customers.csv" in text and "Experiment #1" in text and "13. Final pipeline configuration" in text
+
+    # listed with the other artifacts, downloadable through a signed link
+    arts = c.get(f"/projects/{pid}/experiments/1/artifacts", headers=A).json()
+    assert [a["kind"] for a in arts].count("report") == 1
+    assert c.get(f"/projects/{pid}/artifacts/{art['id']}/url", headers=A).json()["url"].startswith("https://")
+
+    # idempotent: asking again returns the same report; force=true replaces it (still exactly one)
+    again = c.post(f"/projects/{pid}/experiments/1/report", headers=A)
+    assert again.status_code == 200 and again.json()["id"] == art["id"]
+    forced = c.post(f"/projects/{pid}/experiments/1/report?force=true", headers=A)
+    assert forced.status_code == 201 and forced.json()["id"] != art["id"]
+    kinds = [a["kind"] for a in c.get(f"/projects/{pid}/experiments/1/artifacts", headers=A).json()]
+    assert kinds.count("report") == 1 and sum(1 for k in store.objects if k[0] == "reports") == 1
+
+    # outdated runs say so
+    body = body_for(churn_config, ds["dataset_id"]); body["preprocessing"]["scaling"] = "min_max"
+    c.put(f"/projects/{pid}/pipeline", json=body, headers=A)
+    stale = c.post(f"/projects/{pid}/experiments/1/report?force=true", headers=A).json()
+    text2 = "\n".join(p.extract_text() for p in PdfReader(_io.BytesIO(store.objects[("reports", stale["storage_path"])])).pages)
+    assert "pipeline was changed after this run" in text2
+
+    # access control
+    assert c.post(f"/projects/{pid}/experiments/1/report", headers=B).status_code == 404
+    assert c.post(f"/projects/{pid}/experiments/99/report", headers=A).status_code == 404
+    assert c.post(f"/projects/{pid}/experiments/1/report").status_code == 401

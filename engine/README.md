@@ -13,7 +13,7 @@ Everything is driven by a versioned `PipelineConfig` (`nocodeml_engine/config.py
 | 3 | Supabase (schema + RLS + storage policies, repository, project/dataset/artifact service) | done (live-project test not yet run) |
 | 4 | FastAPI (auth, datasets, pipeline, background training, experiments, artifacts) | done, verified live |
 | 5 | Next.js workspace | |
-| 6 | Recommendation engine, PDF report, richer metrics | |
+| 6 | Recommendation engine (done), PDF report (done), richer metrics / Section 0 charts (todo) | partly done |
 | 7 | UI/UX polish | |
 | 8 | Local runner / deployment | |
 
