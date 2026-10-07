@@ -21,7 +21,8 @@ def env():
             raise PermissionError("bad token")
         return FakeSupabase(store, users[token]), users[token]
 
-    app = create_app(client_factory=factory, cors_origins=["http://localhost:3000"])
+    app = create_app(client_factory=factory, cors_origins=["http://localhost:3000"],
+                     client_builder=lambda t: FakeSupabase(store, users[t]))
     with TestClient(app) as c:
         yield c, store, users
 
@@ -503,3 +504,160 @@ def test_feature_recommendations_and_preview_over_http(env, churn_df, churn_conf
     bad = c.post(f"/projects/{pid}/pipeline/preview", json=body, headers=A).json()
     assert bad["features"] == [] and any("does not look like a date" in i for i in bad["feature_issues"])
     assert c.get(f"/projects/{pid}/pipeline/recommendations/features", headers=B).status_code == 404
+
+
+def test_chart_endpoints_return_small_aggregates_and_respect_access(env, churn_df, churn_config):
+    c, *_ = env
+    pid, ds = setup_project(c, churn_df)
+    base = f"/projects/{pid}/datasets/{ds['dataset_id']}/charts"
+
+    h = c.get(f"{base}/distribution", params={"column": "income", "bins": 12}, headers=A).json()
+    assert len(h["counts"]) == 12 and sum(h["counts"]) == h["n"] == 400 and h["box"]["median"] > 0
+    cat = c.get(f"{base}/categories", params={"column": "gender"}, headers=A).json()
+    assert {i["label"] for i in cat["items"]} == {"M", "F"} and sum(i["count"] for i in cat["items"]) == 400
+    corr = c.get(f"{base}/correlation", params={"target": "churn"}, headers=A).json()
+    assert "churn" in corr["columns"] and "customer_id" in corr["columns"] and len(corr["matrix"]) == len(corr["columns"])
+    assert c.get(f"{base}/missing", headers=A).json()["columns"][0]["column"] == "age"
+    sc = c.get(f"{base}/scatter", params={"x": "age", "y": "income"}, headers=A).json()
+    assert sc["n_shown"] == len(sc["x"]) == len(sc["y"]) <= 800
+
+    auto = c.get(f"{base}/auto", params={"target": "churn"}, headers=A).json()
+    assert auto[0]["type"] == "class_balance" and all(a["why"] for a in auto)
+    assert "customer_id" not in [a["params"].get("column") for a in auto]
+    assert len(str(auto)) < 60_000                                     # aggregates only, never the raw rows
+
+    # clear errors
+    assert c.get(f"{base}/distribution", params={"column": "gender"}, headers=A).status_code == 422
+    r = c.get(f"{base}/distribution", params={"column": "nope"}, headers=A)
+    assert r.status_code == 422 and "not found" in r.json()["detail"]
+    assert c.get(f"{base}/distribution", params={"column": "age", "bins": 500}, headers=A).status_code == 422
+    assert c.get(f"{base}/auto", params={"target": "nope"}, headers=A).status_code == 422
+    assert c.get(f"{base}/scatter", params={"x": "age", "y": "age"}, headers=A).status_code == 422
+    # access control
+    for path, q in (("auto", {}), ("distribution", {"column": "age"}), ("missing", {}), ("correlation", {})):
+        assert c.get(f"{base}/{path}", params=q, headers=B).status_code == 404, path
+        assert c.get(f"{base}/{path}", params=q).status_code == 401, path
+
+
+# ---- sign-in reliability: network blips are not "invalid token" -------------
+
+class _Factory:
+    """Counts calls; `script` is a list of outcomes (an Exception to raise, or 'ok')."""
+    def __init__(self, store, script):
+        self.store, self.script, self.calls = store, list(script), 0
+        self.uid = str(uuid.uuid4())
+
+    def __call__(self, token):
+        self.calls += 1
+        out = self.script.pop(0) if self.script else "ok"
+        if isinstance(out, Exception):
+            raise out
+        return FakeSupabase(self.store, self.uid), self.uid
+
+
+def _client(factory, built=None):
+    def build(token):
+        c = FakeSupabase(factory.store, factory.uid)
+        if built is not None:
+            built.append(c)
+        return c
+    return TestClient(create_app(client_factory=factory, cors_origins=[], client_builder=build))
+
+
+def test_unreachable_auth_service_is_503_not_401_and_is_retried_once():
+    store = FakeStore()
+    blip = _Factory(store, [ConnectionError("network is down"), "ok"])
+    with _client(blip) as c:
+        assert c.get("/projects", headers=H("t")).status_code == 200          # one retry rescues a blip
+        assert blip.calls == 2
+    down = _Factory(store, [ConnectionError("down")] * 5)
+    with _client(down) as c:
+        r = c.get("/projects", headers=H("t"))
+        assert r.status_code == 503 and "temporarily unreachable" in r.json()["detail"]
+        assert down.calls == 2                                                # tried twice, then gave up
+    class Timeout(Exception):                                                 # an unknown failure is also not "bad token"
+        pass
+    odd = _Factory(store, [Timeout("boom")] * 5)
+    with _client(odd) as c:
+        assert c.get("/projects", headers=H("t")).status_code == 503
+
+
+def test_a_real_rejection_is_401_and_not_retried():
+    store = FakeStore()
+    for exc in (PermissionError("Invalid or expired access token"), type("AuthApiError", (Exception,), {"status": 401})("bad jwt")):
+        f = _Factory(store, [exc] * 5)
+        with _client(f) as c:
+            assert c.get("/projects", headers=H("t")).status_code == 401
+            assert f.calls == 1, "a definite 'no' must not be retried"
+    rate = _Factory(store, [type("AuthApiError", (Exception,), {"status": 429})("slow down")] * 5)
+    with _client(rate) as c:                                                   # rate-limited: the user did nothing wrong
+        assert c.get("/projects", headers=H("t")).status_code == 503 and rate.calls == 2
+
+
+def test_validated_tokens_are_cached_briefly_and_expire(monkeypatch):
+    import nocodeml_engine.api.app as appmod
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(appmod, "_now", lambda: clock["t"])
+    f = _Factory(FakeStore(), [])
+    with _client(f) as c:
+        for _ in range(5):
+            assert c.get("/projects", headers=H("tok-1")).status_code == 200
+        assert f.calls == 1                                                    # one validation, four cache hits
+        assert c.get("/projects", headers=H("tok-2")).status_code == 200 and f.calls == 2   # per-token
+        clock["t"] += appmod.TOKEN_TTL_SECONDS - 1
+        c.get("/projects", headers=H("tok-1")); assert f.calls == 2           # still trusted
+        clock["t"] += 2
+        c.get("/projects", headers=H("tok-1")); assert f.calls == 3           # expired -> asked again
+        # a rejected token is never cached
+        bad = _Factory(FakeStore(), [PermissionError("no")])
+    with _client(bad) as c:
+        assert c.get("/projects", headers=H("x")).status_code == 401
+        assert c.get("/projects", headers=H("x")).status_code == 200 and bad.calls == 2
+
+
+def test_token_cache_is_bounded():
+    from nocodeml_engine.api.app import TokenCache
+    cache = TokenCache(ttl=60, size=3)
+    for i in range(10):
+        cache.put(f"t{i}", f"u{i}")
+    assert cache.get("t0") is None and cache.get("t9") == "u9" and len(cache._d) == 3
+
+
+def test_clients_are_never_shared_between_requests():
+    """Regression: sharing one Supabase client across threads broke its HTTP/2 connection (ReadError)."""
+    f = _Factory(FakeStore(), [])
+    built: list = []
+    with _client(f, built) as c:
+        for _ in range(4):
+            assert c.get("/projects", headers=H("same-token")).status_code == 200
+    assert f.calls == 1 and len(built) == 3 and len({id(x) for x in built}) == 3   # cache hits still get fresh clients
+
+
+def test_upstream_network_errors_are_503_and_every_error_carries_cors_headers(env, monkeypatch):
+    import httpx
+    import nocodeml_engine.api.app as appmod
+    c, *_ = env
+    origin = {"Origin": "http://localhost:3000"}
+    monkeypatch.setattr(appmod.ProjectService, "list_projects",
+                        lambda self: (_ for _ in ()).throw(httpx.ConnectError("[Errno 54] Connection reset by peer")))
+    r = c.get("/projects", headers={**A, **origin})
+    assert r.status_code == 503 and "try again" in r.json()["detail"]
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"    # visible to the browser
+    assert "Errno" not in r.text                                                     # internals stay in the log
+
+    monkeypatch.setattr(appmod.ProjectService, "list_projects", lambda self: (_ for _ in ()).throw(KeyError("secret-internal")))
+    c2 = TestClient(c.app, raise_server_exceptions=False)
+    r = c2.get("/projects", headers={**A, **origin})
+    assert r.status_code == 500 and r.json()["detail"] == "Internal server error." and "secret" not in r.text
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
+def test_a_network_failure_during_training_gives_a_clear_job_error(env, churn_df, churn_config, monkeypatch):
+    import httpx
+    import nocodeml_engine.api.app as appmod
+    c, *_ = env
+    pid, ds = setup_project(c, churn_df)
+    c.put(f"/projects/{pid}/pipeline", json=body_for(churn_config, ds["dataset_id"]), headers=A)
+    monkeypatch.setattr(appmod, "run_experiment", lambda *a, **k: (_ for _ in ()).throw(httpx.ReadError("reset")))
+    job = train_and_wait(c, pid)
+    assert job["status"] == "failed" and "Lost the connection to the database" in job["error"]

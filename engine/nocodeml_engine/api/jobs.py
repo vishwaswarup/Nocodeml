@@ -22,6 +22,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_network_error(e: BaseException) -> bool:
+    try:
+        import httpx
+        if isinstance(e, httpx.TransportError):
+            return True
+    except ImportError:  # pragma: no cover
+        pass
+    return isinstance(e, (ConnectionError, TimeoutError))
+
+
 class Job(BaseModel):
     id: str
     project_id: str
@@ -40,8 +50,13 @@ class JobConflict(RuntimeError):
     pass
 
 
+class JobBusy(RuntimeError):
+    """Too many jobs are already waiting; the user should try again shortly."""
+
+
 class JobManager:
-    def __init__(self, max_workers: int = 2):
+    def __init__(self, max_workers: int = 2, max_waiting: int = 20):
+        self._max_waiting = max_waiting
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="train")
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
@@ -52,6 +67,9 @@ class JobManager:
             if any(j.project_id == project_id and j.status in ("queued", "running")
                    for j in self._jobs.values()):
                 raise JobConflict("A training job is already running for this project.")
+            waiting = sum(1 for j in self._jobs.values() if j.status == "queued")
+            if waiting >= self._max_waiting:
+                raise JobBusy("The training queue is full right now. Please try again in a few minutes.")
             job = Job(id=uuid.uuid4().hex, project_id=project_id, owner_id=owner_id,
                       created_at=_now())
             self._jobs[job.id] = job
@@ -71,8 +89,10 @@ class JobManager:
             issues = getattr(e, "issues", None)
             if issues:
                 job.issues = list(issues)
-            job.error = str(e) if isinstance(e, (ValueError, RuntimeError)) else \
-                "Training failed unexpectedly."
+            if _is_network_error(e):
+                job.error = "Lost the connection to the database while training. Nothing was saved; please train again."
+            else:
+                job.error = str(e) if isinstance(e, (ValueError, RuntimeError)) else "Training failed unexpectedly."
         finally:
             job.finished_at = _now()
 

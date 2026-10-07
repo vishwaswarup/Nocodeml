@@ -24,16 +24,24 @@ class SupabaseSettings:
             raise RuntimeError(f"Missing environment variable {e.args[0]}") from None
 
 
+def build_client(settings: SupabaseSettings, access_token: str):
+    """A Supabase client that sends `access_token` on every request (no network call here).
+
+    Build one per request: the client's HTTP/2 connections are not safe to share between threads.
+    """
+    from supabase import ClientOptions, create_client
+
+    return create_client(settings.url, settings.anon_key, options=ClientOptions(
+        headers={"Authorization": f"Bearer {access_token}"}))
+
+
 def authenticated_client(settings: SupabaseSettings, access_token: str):
     """Return (client, user_id) acting as the owner of `access_token`.
 
     The token is validated with Supabase Auth; every request then carries it, so RLS sees
     auth.uid() == the user.
     """
-    from supabase import ClientOptions, create_client
-
-    client = create_client(settings.url, settings.anon_key, options=ClientOptions(
-        headers={"Authorization": f"Bearer {access_token}"}))
+    client = build_client(settings, access_token)
     user = client.auth.get_user(access_token)
     if user is None or user.user is None:
         raise PermissionError("Invalid or expired access token")

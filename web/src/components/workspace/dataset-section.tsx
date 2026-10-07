@@ -12,6 +12,7 @@ import { api, ApiError } from "@/lib/api";
 import { bytes, fmt, int } from "@/lib/format";
 import type { DatasetInfo, DatasetProfile, PipelineSaved, ProjectState, Task } from "@/lib/types";
 import { DataViewer } from "./data-viewer";
+import { ExploreSection } from "./explore-section";
 import { Dropzone, MAX_UPLOAD } from "./dropzone";
 
 const KIND_LABEL = { numerical: "num", categorical: "cat", datetime: "date" } as const;
@@ -286,6 +287,9 @@ function LoadedDataset({ projectId, datasetId, state, onChanged, onReplace, uplo
           </div>
         )}
       </section>
+
+      {/* charts */}
+      {profile && <ExploreSection projectId={projectId} datasetId={datasetId} target={target} profile={profile} key={latest?.version} />}
 
       {/* raw rows */}
       <section>

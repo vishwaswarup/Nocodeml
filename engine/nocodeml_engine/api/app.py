@@ -13,18 +13,21 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Callable
 from uuid import UUID
 
+import httpx
 import pandas as pd
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import JSONResponse
 
-from nocodeml_engine.api.jobs import Job, JobConflict, JobManager
+from nocodeml_engine.api.jobs import Job, JobBusy, JobConflict, JobManager
+from nocodeml_engine.api.ratelimit import RateLimited, RateLimiter
 from nocodeml_engine.api.schemas import (
     ExperimentSummary, PipelineConfigIn, PipelineSaved, ProjectCreate, RowsPage, ValidationReport,
 )
@@ -53,6 +56,60 @@ ClientFactory = Callable[[str], tuple[object, str]]  # access_token -> (supabase
 
 MAX_ROWS_PAGE = 200
 
+# Requests allowed per rolling window. Generous for normal use, tight for the expensive operations.
+IP_LIMIT = (600, 60)                 # everything, per client IP (stops floods before sign-in checks)
+USER_LIMIT = (300, 60)               # everything signed-in, per user
+HEAVY_LIMITS = {                     # name -> (requests, seconds), per user
+    "upload": (10, 60),
+    "train": (6, 60),
+    "report": (6, 60),
+    "preview": (60, 60),
+}
+TRAIN_TIMEOUT_SECONDS = 600          # default cap on one training run (override: NOCODEML_TRAIN_TIMEOUT)
+
+
+TOKEN_TTL_SECONDS = 15    # how long a validated token is trusted before Supabase is asked again
+TOKEN_CACHE_SIZE = 512
+_now = time.monotonic     # indirection so tests can move time
+
+
+class TokenCache:
+    """Short-lived memo of validated access tokens -> user_id.
+
+    Saves a network round trip to Supabase on every request. Only the *validation result* is cached:
+    every request still gets its own client, because the Supabase client's HTTP/2 connections are not
+    safe to share between threads (sharing one caused intermittent ReadErrors). The trade-off is
+    explicit: a token revoked at Supabase (sign-out, deleted account) can be honoured for up to
+    TOKEN_TTL_SECONDS longer.
+    """
+
+    def __init__(self, ttl: float = TOKEN_TTL_SECONDS, size: int = TOKEN_CACHE_SIZE):
+        self.ttl, self.size, self._d, self._lock = ttl, size, OrderedDict(), threading.Lock()
+
+    def get(self, token: str) -> str | None:
+        with self._lock:
+            hit = self._d.get(token)
+            if hit and hit[1] > _now():
+                self._d.move_to_end(token)
+                return hit[0]
+            self._d.pop(token, None)
+            return None
+
+    def put(self, token: str, user_id: str) -> None:
+        with self._lock:
+            self._d[token] = (user_id, _now() + self.ttl)
+            self._d.move_to_end(token)
+            while len(self._d) > self.size:
+                self._d.popitem(last=False)
+
+
+def _is_rejection(e: Exception) -> bool:
+    """The auth service answered and said no (as opposed to not answering)."""
+    if isinstance(e, PermissionError):
+        return True
+    status = getattr(e, "status", None) or getattr(e, "code", None)
+    return isinstance(status, int) and 400 <= status < 500 and status != 429
+
 
 class DataFrameCache:
     """Small LRU of verified dataset versions (immutable, so safe to cache). Key includes user."""
@@ -79,9 +136,18 @@ def _headline(model_result) -> dict:
 
 
 def create_app(client_factory: ClientFactory | None = None, cors_origins: list[str] | None = None,
-               max_workers: int = 2) -> FastAPI:
+               max_workers: int = 2, client_builder: Callable[[str], object] | None = None,
+               limiter: RateLimiter | None = None, train_timeout: float | None = None,
+               rate_limits: dict | None = None) -> FastAPI:
+    """`client_factory(token)` validates a token and returns (client, user_id) (network call).
+    `client_builder(token)` just builds a client for an already-validated token (no network call)."""
     jobs = JobManager(max_workers=max_workers)
     cache = DataFrameCache()
+    tokens = TokenCache()
+    limiter = limiter or RateLimiter()
+    limits = {"ip": IP_LIMIT, "user": USER_LIMIT, **HEAVY_LIMITS, **(rate_limits or {})}
+    timeout = train_timeout if train_timeout is not None else float(
+        os.environ.get("NOCODEML_TRAIN_TIMEOUT", TRAIN_TIMEOUT_SECONDS))
     report_slots = threading.BoundedSemaphore(2)  # PDF rendering is CPU/memory heavy: at most 2 at once
 
     @asynccontextmanager
@@ -93,9 +159,33 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     app.state.jobs = jobs
 
     if client_factory is None:
-        from nocodeml_engine.persistence import SupabaseSettings, authenticated_client
+        from nocodeml_engine.persistence import SupabaseSettings, authenticated_client, build_client
         settings = SupabaseSettings.from_env()
         client_factory = lambda token: authenticated_client(settings, token)  # noqa: E731
+        client_builder = client_builder or (lambda token: build_client(settings, token))
+    if client_builder is None:  # without a cheap builder, every request validates (no caching benefit)
+        client_builder = lambda token: client_factory(token)[0]  # noqa: E731
+
+    # Must be registered before CORS so CORS wraps it: every error response then carries CORS headers
+    # (otherwise the browser reports a generic "CORS" failure instead of the real message).
+    @app.middleware("http")
+    async def _catch_unexpected(request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception:  # noqa: BLE001
+            log.exception("unhandled error")  # details stay in the server log, never in the response
+            return JSONResponse(status_code=500, content={"detail": "Internal server error.", "issues": []})
+
+    @app.middleware("http")
+    async def _ip_limit(request: Request, call_next):
+        if request.method == "OPTIONS" or request.url.path == "/health":
+            return await call_next(request)
+        ip = request.client.host if request.client else "unknown"
+        try:
+            limiter.check("ip", ip, *limits["ip"])
+        except RateLimited as e:
+            return _too_many(e)
+        return await call_next(request)
 
     origins = cors_origins if cors_origins is not None else [
         o for o in os.environ.get("NOCODEML_CORS_ORIGINS", "http://localhost:3000").split(",") if o]
@@ -103,6 +193,15 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
                        allow_headers=["Authorization", "Content-Type"])
 
     # ---- errors ----------------------------------------------------------
+
+    def _too_many(e: RateLimited) -> JSONResponse:
+        return JSONResponse(status_code=429, headers={"Retry-After": str(e.retry_after)},
+                            content={"detail": f"You're going a bit fast. Please wait {e.retry_after} seconds and try again.",
+                                     "issues": []})
+
+    @app.exception_handler(RateLimited)
+    async def _rate_limited(_: Request, e: RateLimited):
+        return _too_many(e)
 
     def err(status: int, message: str, issues: list[str] | None = None):
         return JSONResponse(status_code=status, content={"detail": message, "issues": issues or []})
@@ -132,23 +231,49 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     async def _config(_: Request, e: Exception):
         return err(422, str(e), [str(e)])
 
-    @app.exception_handler(Exception)
-    async def _unexpected(_: Request, e: Exception):
-        log.exception("unhandled error")  # details stay in the server log, never in the response
-        return err(500, "Internal server error.")
+    @app.exception_handler(httpx.TransportError)
+    @app.exception_handler(ConnectionError)
+    async def _upstream(_: Request, e: Exception):
+        # The database/storage could not be reached (connection reset, timeout...). Transient: not a bug
+        # and not the user's fault. The web app retries read requests automatically on 503.
+        log.warning("upstream unavailable: %s: %s", type(e).__name__, str(e)[:200])
+        return err(503, "Couldn't reach the database just now. Please try again in a moment.")
 
     # ---- dependencies ----------------------------------------------------
 
     bearer = HTTPBearer(auto_error=False)  # also gives /docs its "Authorize" button
 
-    def current_service(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> ProjectService:
+    def authenticate(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> ProjectService:
         if creds is None or creds.scheme.lower() != "bearer" or not creds.credentials:
             raise HTTPException(401, "Missing bearer token.")
-        try:
-            client, user_id = client_factory(creds.credentials)
-        except Exception:
+        uid = tokens.get(creds.credentials)
+        if uid:
+            return ProjectService(client_builder(creds.credentials), uid)
+        last: Exception | None = None
+        for _attempt in range(2):                      # one retry: a network blip shouldn't sign anyone out
+            try:
+                client, user_id = client_factory(creds.credentials)
+                tokens.put(creds.credentials, user_id)
+                return ProjectService(client, user_id)
+            except Exception as e:  # noqa: BLE001
+                last = e
+                if _is_rejection(e):
+                    break
+        log.warning("token validation failed: %s: %s", type(last).__name__, str(last)[:200])
+        if last is not None and _is_rejection(last):
             raise HTTPException(401, "Invalid or expired token.") from None
-        return ProjectService(client, user_id)
+        # The service could not be reached (or failed): that is not the user's fault and not a bad token.
+        raise HTTPException(503, "The sign-in service is temporarily unreachable. Please try again in a moment.") from None
+
+    def current_service(svc: ProjectService = Depends(authenticate)) -> ProjectService:
+        limiter.check("user", svc.user_id, *limits["user"])
+        return svc
+
+    def heavy(name: str):
+        """Dependency: count this request against the user's budget for an expensive operation."""
+        def dep(svc: ProjectService = Depends(current_service)) -> None:
+            limiter.check(name, svc.user_id, *limits[name])
+        return dep
 
     def project_ctx(project_id: UUID, svc: ProjectService = Depends(current_service)):
         pid = str(project_id)
@@ -219,7 +344,8 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
 
     @app.post("/projects/{project_id}/datasets", status_code=201)
     async def upload_dataset(file: UploadFile = File(...), target: str | None = Form(default=None),
-                             dataset_id: str | None = Form(default=None), ctx=Depends(project_ctx)):
+                             dataset_id: str | None = Form(default=None), ctx=Depends(project_ctx),
+                             _rl=Depends(heavy("upload"))):
         svc, pid = ctx
         data = await file.read(MAX_DATASET_BYTES + 1)  # never buffer more than the limit
         return svc.add_dataset(pid, file.filename or "dataset.csv", data, target, dataset_id)
@@ -394,13 +520,13 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             "n_rows": n_rows, "n_features": n_features} for m in cfg.models}
 
     @app.post("/projects/{project_id}/pipeline/validate-models")
-    def validate_models(body: PipelineConfigIn, ctx=Depends(project_ctx)):
+    def validate_models(body: PipelineConfigIn, ctx=Depends(project_ctx), _rl=Depends(heavy("preview"))):
         """Instant check of each model's settings. Does not touch the dataset, so it stays fast."""
         _, pid = ctx
         return {"model_issues": preview_models(full_config(pid, body))}
 
     @app.post("/projects/{project_id}/pipeline/preview")
-    def preview_pipeline(body: PipelineConfigIn, ctx=Depends(project_ctx)):
+    def preview_pipeline(body: PipelineConfigIn, ctx=Depends(project_ctx), _rl=Depends(heavy("preview"))):
         """Validate an unsaved draft and show before/after data shape (preview only, nothing saved)."""
         svc, pid = ctx
         cfg = full_config(pid, body)
@@ -419,7 +545,7 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             pipes = svc.pipelines(pid)
             cfg = pipes.latest(pid).config
             df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
-            run = run_experiment(df, cfg)
+            run = run_experiment(df, cfg, deadline=time.monotonic() + timeout)
             exp = pipes.record_experiment(run.result)
             try:
                 with tempfile.TemporaryDirectory() as d:
@@ -433,7 +559,7 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         return work
 
     @app.post("/projects/{project_id}/training", status_code=202)
-    def start_training(ctx=Depends(project_ctx)):
+    def start_training(ctx=Depends(project_ctx), _rl=Depends(heavy("train"))):
         """Queue training of the latest pipeline version. Poll the returned job."""
         svc, pid = ctx
         pipes = svc.pipelines(pid)
@@ -444,6 +570,8 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             return jobs.submit(pid, svc.user_id, train_job(svc, pid))
         except JobConflict as e:
             raise HTTPException(409, str(e)) from None
+        except JobBusy as e:
+            raise HTTPException(503, str(e)) from None
 
     @app.get("/projects/{project_id}/training/active")
     def active_training(ctx=Depends(project_ctx)):
@@ -496,7 +624,8 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         return svc.pipelines(pid).compare(pid, a, b)
 
     @app.post("/projects/{project_id}/experiments/{number}/report")
-    def create_report(number: int, response: Response, force: bool = False, ctx=Depends(project_ctx)):
+    def create_report(number: int, response: Response, force: bool = False, ctx=Depends(project_ctx),
+                      _rl=Depends(heavy("report"))):
         """Generate (or return the existing) PDF report for an experiment. Deterministic, template-based."""
         svc, pid = ctx
         pipes = svc.pipelines(pid)

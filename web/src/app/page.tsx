@@ -61,12 +61,13 @@ export default function Home() {
         cta={<Link href="/login" className="inline-flex h-11 items-center rounded-full bg-fg px-5 text-[16px] font-medium text-on-light transition-colors hover:bg-white/90">Start building</Link>}
       />
       <main>
-        <section className="flex flex-col items-center px-4 pt-44 pb-24 text-center">
+        <section className="relative isolate flex flex-col items-center overflow-hidden px-4 pt-44 pb-24 text-center">
+          <div aria-hidden className="hero-hands" />
           <CountBadge value="5">models compared in one run</CountBadge>
           <h1 className="mt-6 max-w-[920px] text-[clamp(2.6rem,7vw,4.6rem)] leading-[1.03] font-medium tracking-[-0.035em]">
             Stop rewriting the same ML code for every experiment
           </h1>
-          <p className="mt-6 max-w-[580px] text-[18px] leading-relaxed text-fg-muted">
+          <p className="mt-6 max-w-[580px] text-[18px] leading-relaxed text-[#bdbdbd]">
             Upload a dataset, pick your models, tweak hyperparameters and compare the results side by side.
             The experiments you&apos;d script in Python, done in minutes in your browser.
           </p>
@@ -118,7 +119,8 @@ export default function Home() {
           </div>
         </section>
 
-        <section id="how" className="scroll-mt-28 px-4 pb-28">
+        <section id="how" className="relative isolate scroll-mt-28 overflow-hidden px-4 pt-20 pb-32">
+          <div aria-hidden className="section-glow section-glow--how" />
           <div className="mx-auto max-w-[1180px]">
             <h2 className="text-center text-h1">How it works</h2>
             <div className="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -132,7 +134,7 @@ export default function Home() {
             </div>
             <ul className="mx-auto mt-14 grid max-w-[860px] gap-x-10 gap-y-3 sm:grid-cols-2">
               {features.map((f) => (
-                <li key={f} className="flex gap-3 text-[15px] text-fg-muted">
+                <li key={f} className="flex gap-3 text-[15px] text-[#c4c4c4]">
                   <Check className="mt-0.5 size-4 shrink-0 text-fg" strokeWidth={2.5} />
                   {f}
                 </li>

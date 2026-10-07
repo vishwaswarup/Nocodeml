@@ -28,6 +28,16 @@ from nocodeml_engine.splitting import SplitPlan, make_split_plan, validate_split
 from nocodeml_engine.training.fitted import FittedPipeline, fit_pipeline, resolved_params
 
 
+class TrainingTimeout(RuntimeError):
+    """Training ran longer than the allowed time and was stopped between steps."""
+
+
+def _check_deadline(deadline: float | None) -> None:
+    if deadline is not None and time.monotonic() > deadline:
+        raise TrainingTimeout("Training took longer than the time limit and was stopped. "
+                              "Try fewer models, fewer folds or a smaller dataset.")
+
+
 class ConfigurationError(ValueError):
     pass
 
@@ -107,7 +117,7 @@ def _baseline_metrics(task, y_true_raw: pd.Series, preds: np.ndarray, classes):
     return {"r2": m["r2"], "rmse": m["rmse"], "mae": m["mae"]}
 
 
-def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes):
+def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: float | None = None):
     task = config.dataset.task
     pm = primary_metric(task)
     spec = get_spec(model_cfg.model_key)
@@ -120,6 +130,7 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes):
 
     if plan.mode == "holdout":
         f = plan.folds[0]
+        _check_deadline(deadline)
         Xtr, ytr = X.iloc[f.train], y.iloc[f.train]
         fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes)
         fold_rows.append((fp.n_rows_fitted + fp.n_outlier_rows_removed, len(f.train)))
@@ -134,6 +145,7 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes):
     else:
         oof_idx, oof_true, oof_pred, oof_score, base_pred, train_primary = [], [], [], [], [], []
         for f in plan.folds:
+            _check_deadline(deadline)
             Xtr, ytr = X.iloc[f.train], y.iloc[f.train]
             Xte, yte = X.iloc[f.test], y.iloc[f.test]
             fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes)
@@ -171,7 +183,8 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes):
 
 
 def run_experiment(df: pd.DataFrame, config: PipelineConfig,
-                   experiment_id: str | None = None) -> ExperimentRun:
+                   experiment_id: str | None = None, deadline: float | None = None) -> ExperimentRun:
+    """`deadline` is an absolute time.monotonic() value; checked before each model and fold."""
     started = datetime.now(timezone.utc)
     _validate(df, config)
     target = config.dataset.target_column
@@ -205,7 +218,7 @@ def run_experiment(df: pd.DataFrame, config: PipelineConfig,
 
     results, pipelines, fitted_rows = [], {}, {}
     for m in config.models:
-        r, fp, rows = _train_model(m, config, X, y, plan, classes)
+        r, fp, rows = _train_model(m, config, X, y, plan, classes, deadline)
         results.append(r)
         pipelines[m.model_key] = fp
         fitted_rows[m.model_key] = rows

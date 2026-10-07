@@ -21,7 +21,7 @@ def df():
         "noise": rng.normal(size=n),
         "plan": rng.choice(["basic", "pro", "team"], n, p=[0.6, 0.3, 0.1]),
         "city": [f"c{i}" for i in rng.integers(0, 60, n)],
-        "churn": (x + rng.normal(0, 1, n) > 1.2).astype(int),
+        "churn": (x + rng.normal(0, 1, n) > 1.9).astype(int),
     })
     d.loc[rng.choice(n, 80, replace=False), "noise"] = np.nan
     d.loc[rng.choice(n, 40, replace=False), "plan"] = np.nan

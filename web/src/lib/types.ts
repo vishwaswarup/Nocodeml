@@ -205,3 +205,23 @@ export type Comparison = {
 /* ---- Section 2: features ---- */
 
 export type NewFeature = { name: string; source: string; op: string; sample: (number | string | null)[] };
+
+/* ---- Section 0: charts ---- */
+
+export type BoxStats = { min: number; q1: number; median: number; q3: number; max: number; whisker_low: number; whisker_high: number; outliers: number[]; outlier_count: number };
+export type DistributionData = {
+  column: string; n: number; missing: number; edges: number[]; counts: number[]; box: BoxStats;
+  stats: { mean: number | null; std: number | null; skewness: number | null };
+};
+export type CategoryData = { column: string; n: number; missing: number; n_unique: number; items: { label: string; count: number; share: number }[]; other: number; other_share: number };
+export type ClassBalanceData = { column: string; n: number; imbalanced: boolean; minority_ratio: number; items: { label: string; count: number; share: number }[] };
+export type MissingData = { n_rows: number; columns: { column: string; missing: number; pct: number }[]; rows_with_missing: number; rows_with_missing_pct: number };
+export type ScatterData = { x_column: string; y_column: string; n_total: number; n_shown: number; r: number | null; x: number[]; y: number[] };
+export type CorrelationData = { columns: string[]; matrix: (number | null)[][]; target: string | null; note: string | null; top_pairs: { a: string; b: string; r: number }[] };
+export type ChartSpec =
+  | { id: string; type: "class_balance"; title: string; why: string; data: ClassBalanceData }
+  | { id: string; type: "distribution"; title: string; why: string; data: DistributionData }
+  | { id: string; type: "categories"; title: string; why: string; data: CategoryData }
+  | { id: string; type: "missing"; title: string; why: string; data: MissingData }
+  | { id: string; type: "correlation"; title: string; why: string; data: CorrelationData }
+  | { id: string; type: "scatter"; title: string; why: string; data: ScatterData };

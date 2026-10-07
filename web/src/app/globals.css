@@ -122,3 +122,91 @@
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
+
+/*
+ * Hero background: a robot hand reaching for a human hand (public/hero-hands-v2.webp, background removed and
+ * cropped tight to the hands, so "centred" really is centred and it floats on the dark page instead of
+ * sitting in a pale box). Decorative only (aria-hidden), behind the text.
+ *
+ * Visible at 50% opacity at the sides; under the text a soft elliptical mask lowers it to ~30% of that
+ * (about 15% overall) so the headline and paragraph keep their contrast.
+ */
+.hero-hands {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.5;
+  background: url("/hero-hands-v2.webp") 50% 50% / 116vw auto no-repeat;
+  /* two masks multiplied: the dim zone under the text, and a fade at the top and bottom so the picture
+     dissolves instead of being cut off with a hard line where the hero ends (visible while parallax-scrolling) */
+  -webkit-mask-image: radial-gradient(ellipse 38% 48% at 50% 50%, rgb(0 0 0 / 0.3) 0%, rgb(0 0 0 / 0.3) 56%, #000 100%),
+    linear-gradient(to bottom, transparent 0%, #000 10%, #000 78%, transparent 100%);
+  mask-image: radial-gradient(ellipse 38% 48% at 50% 50%, rgb(0 0 0 / 0.3) 0%, rgb(0 0 0 / 0.3) 56%, #000 100%),
+    linear-gradient(to bottom, transparent 0%, #000 10%, #000 78%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+/* Parallax: the picture stays put while the page scrolls over it. Desktop with a mouse, and only when the
+   visitor hasn't asked for reduced motion (iOS ignores fixed backgrounds anyway). The image is 116vw wide
+   and 4.156 times wider than tall, so its height is 27.9vw; this puts its centre 400px from the top. */
+@media (min-width: 1024px) and (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .hero-hands {
+    background-attachment: fixed;
+    background-position: 50% calc(400px - 13.95vw);
+  }
+}
+
+/* Phones: zoom in on the middle so the two fingertips meeting are what you see. */
+@media (max-width: 767px) {
+  .hero-hands {
+    opacity: 0.5;
+    background-size: 260vw auto;
+    background-position: 50% 46%;
+  }
+}
+
+/*
+ * Section glow: the warm abstract gradient (public/section-glow-v1.jpg) behind key sections.
+ *  - the picture itself sits at 50% opacity (::before)
+ *  - a dark overlay sits on top of it at full strength (::after) so text on the background stays readable:
+ *    heavier at the top and bottom edges and behind the centred heading
+ *  - the whole layer fades out at the section's top and bottom, so it blends into the page with no seams
+ * The picture runs bottom-left to top-right; each section crops it so the orange band crosses the layout
+ * at a different height instead of repeating exactly.
+ */
+.section-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 82%, transparent 100%);
+}
+.section-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background: url("/section-glow-v1.jpg") 50% 60% / cover no-repeat;
+}
+.section-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* a light veil everywhere, plus stronger dark pools exactly where text sits directly on the background */
+  background:
+    radial-gradient(ellipse 48% 22% at 50% 12%, rgb(20 20 20 / 0.62), transparent 80%),
+    linear-gradient(180deg, rgb(20 20 20 / 0.26) 0%, rgb(20 20 20 / 0.1) 40%, rgb(20 20 20 / 0.22) 100%);
+}
+.section-glow--how::before {
+  background-position: 70% 40%;
+}
+/* "How it works": the feature list sits low and centred, directly on the picture */
+.section-glow--how::after {
+  background:
+    radial-gradient(ellipse 48% 18% at 50% 12%, rgb(20 20 20 / 0.62), transparent 80%),
+    radial-gradient(ellipse 58% 27% at 46% 80%, rgb(20 20 20 / 0.8), transparent 88%),
+    linear-gradient(180deg, rgb(20 20 20 / 0.26) 0%, rgb(20 20 20 / 0.08) 45%, rgb(20 20 20 / 0.2) 100%);
+}
