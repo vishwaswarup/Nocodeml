@@ -2,10 +2,11 @@
 
 _Last updated 2026-10-07._
 
-## Done (all verified: 112 backend tests, 245 browser checks)
+## Done (all verified: 114 backend tests, 245 browser checks)
 - Core ML engine, versioned pipelines, experiments, finalize, compare (Phases 1-2)
 - Supabase: schema + row-level security + private storage, Google + email login (Phase 3)
 - FastAPI: auth, datasets, pipeline, background training, results, downloads (Phase 4)
+- Delete project (UI + API, blocked while training), security headers, prod mode, DB advisor fixes
 - Web app: landing page, login, projects, and **all 8 workspace sections**
   (Dataset + charts, Preprocessing, Features, Split, Models, Regularization, Training, Results)
 - NoCodeML recommendations (preprocessing, features, split), pipeline-health quality checks
@@ -18,13 +19,10 @@ _Last updated 2026-10-07._
      (`NOCODEML_TRAIN_TIMEOUT`, default 600s, checked between models/folds), queue cap (503 when 20 waiting).
    - Still to do: replace the in-memory thread pool with Celery/RQ + Redis so job status survives restarts,
      training runs off the API process, and the rate-limit counters are shared across API processes.
-2. **Dataset charts in the PDF report** (class balance, correlations, distributions).
+2. ~~Dataset charts in the PDF report~~ DONE 2026-10-07 (new section 3 "Dataset charts"; report is now 14 sections).
 3. **Local runner** (spec section 27/47): train on the user's own machine so data never leaves it.
-4. **Pre-launch hardening checklist**
-   - Turn off `/docs` in production; set `NOCODEML_CORS_ORIGINS` to the real domain.
-   - Google OAuth app: move from "Testing" to "In production" (consent screen -> Audience -> Publish).
-   - Add the production URL to Supabase Authentication -> URL Configuration.
-   - Error monitoring + logging; backups of the Supabase database.
+4. ~~Pre-launch hardening~~ code side DONE 2026-10-07. What remains is dashboard clicks: see **DEPLOY.md**
+   (apply `supabase/migrations/0002_hardening.sql`, publish Google app, Supabase URL config, backups, monitoring).
 
 ## Backlog (not started)
 - XGBoost (and LightGBM/CatBoost later)

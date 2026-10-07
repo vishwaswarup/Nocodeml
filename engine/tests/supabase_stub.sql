@@ -14,3 +14,6 @@ grant usage on schema public, auth, storage to authenticated, anon;
 -- NOTE: no default privileges on purpose; the migration must grant what it needs.
 grant select on auth.users to authenticated;
 grant select, insert, update, delete on storage.objects to authenticated;
+-- Hosted Supabase grants EXECUTE on new functions to anon and authenticated by default; mirror that for
+-- functions only (tables stay explicit) so tests catch functions that are exposed through the API by accident.
+alter default privileges in schema public grant execute on functions to anon, authenticated;

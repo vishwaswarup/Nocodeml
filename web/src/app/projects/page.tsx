@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, Plus } from "lucide-react";
+import { LogOut, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { RequireAuth, useAuth } from "@/components/auth-provider";
@@ -30,6 +30,8 @@ function Projects() {
   const [saving, setSaving] = useState(false);
 
   const [reloadKey, setReloadKey] = useState(0);
+  const [confirmId, setConfirmId] = useState<string | null>(null);   // project whose delete is awaiting confirmation
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -59,6 +61,20 @@ function Projects() {
       setError((err as Error).message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    setDeletingId(id);
+    try {
+      await api(`/projects/${id}`, { method: "DELETE" });
+      setProjects((list) => list?.filter((p) => p.id !== id) ?? null);
+      setConfirmId(null);
+    } catch (err) {
+      setConfirmId(null);
+      setError((err as Error).message);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -113,19 +129,42 @@ function Projects() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects?.map((p) => (
-              <Link key={p.id} href={`/projects/${p.id}`}
-                className="group flex flex-col rounded-card bg-surface p-5 ring-1 ring-transparent transition-[background-color,box-shadow] hover:bg-surface-2 hover:ring-line-strong">
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-[18px] leading-snug tracking-[-0.02em]">{p.name}</p>
-                  {p.pipeline_version && <Tag>{p.pipeline_version}</Tag>}
-                </div>
-                <div className="mt-8 flex items-center justify-between text-[13px] text-fg-subtle">
-                  <span>Updated {ago(p.updated_at)}</span>
-                  {p.status === "Finalized" ? <StatusPill status="pass">Finalized</StatusPill>
-                    : p.status === "Experimenting" ? <StatusPill status="info">Experimenting</StatusPill>
-                    : <span className="text-fg-subtle">Empty</span>}
-                </div>
-              </Link>
+              <div key={p.id} className="group relative">
+                {confirmId === p.id ? (
+                  <div role="alertdialog" aria-label={`Delete ${p.name}`}
+                    className="flex h-full min-h-[132px] flex-col justify-between rounded-card bg-surface p-5 ring-1 ring-fail/40">
+                    <p className="text-[14px] leading-snug text-fg-muted">
+                      Delete <span className="text-fg">{p.name}</span>? This permanently removes its datasets, pipeline
+                      versions, experiments and reports. It can&apos;t be undone.
+                    </p>
+                    <div className="mt-4 flex items-center gap-2">
+                      <Button variant="danger" size="sm" autoFocus loading={deletingId === p.id} onClick={() => remove(p.id)}>Yes, delete</Button>
+                      <Button variant="ghost" size="sm" disabled={deletingId === p.id} onClick={() => setConfirmId(null)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <Link href={`/projects/${p.id}`}
+                      className="flex h-full flex-col rounded-card bg-surface p-5 ring-1 ring-transparent transition-[background-color,box-shadow] hover:bg-surface-2 hover:ring-line-strong">
+                      <div className="flex items-start justify-between gap-3 pr-8">
+                        <p className="text-[18px] leading-snug tracking-[-0.02em]">{p.name}</p>
+                        {p.pipeline_version && <Tag>{p.pipeline_version}</Tag>}
+                      </div>
+                      <div className="mt-auto flex items-center justify-between pt-8 text-[13px] text-fg-subtle">
+                        <span>Updated {ago(p.updated_at)}</span>
+                        {p.status === "Finalized" ? <StatusPill status="pass">Finalized</StatusPill>
+                          : p.status === "Experimenting" ? <StatusPill status="info">Experimenting</StatusPill>
+                          : <span className="text-fg-subtle">Empty</span>}
+                      </div>
+                    </Link>
+                    <button type="button" aria-label={`Delete project ${p.name}`} title="Delete project"
+                      onClick={() => setConfirmId(p.id)}
+                      className="absolute top-3 right-3 inline-flex size-8 items-center justify-center rounded-full text-fg-subtle transition-colors hover:bg-fail/15 hover:text-fail focus-visible:text-fail">
+                      <Trash2 className="size-4" aria-hidden />
+                    </button>
+                  </>
+                )}
+              </div>
             ))}
           </div>
         )}

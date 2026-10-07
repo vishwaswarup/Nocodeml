@@ -350,6 +350,39 @@ def s_statistics(c: ReportContext, n: int) -> list[Flowable]:
     return out
 
 
+def s_dataset_charts(c: ReportContext, n: int) -> list[Flowable]:
+    """Charts of the dataset as uploaded (before preprocessing), chosen by the same rules as the web app."""
+    specs = c.extras.get("dataset_charts") or []
+    cells: list[tuple[str, Any, str]] = []  # (title, rendered image, why)
+    for spec in specs:
+        render = charts.DATASET_CHART_RENDERERS.get(spec["type"])
+        if render is None:
+            continue
+        try:
+            cells.append((spec["title"], render(spec["data"]), spec["why"], spec["type"]))
+        except Exception:  # noqa: BLE001 - one bad chart must not lose the whole report
+            continue
+    if not cells:
+        return []
+    out: list[Flowable] = [section(n, "Dataset charts"),
+                           P("Drawn from the dataset as uploaded, before any preprocessing. Charts are picked by fixed rules, "
+                             "and the sentence under each says why.", "small")]
+    half = (CONTENT_W - 6 * mm) / 2
+    wide = [x for x in cells if x[3] == "correlation"]
+    narrow = [x for x in cells if x[3] != "correlation"]
+
+    def block(title, png, why, width):
+        return [P(title, "h2"), image(png, width), P(why, "small")]   # a list is a multi-flowable table cell
+
+    for i in range(0, len(narrow), 2):
+        row = [block(t, png, why, half) for t, png, why, _ in narrow[i:i + 2]]
+        out.append(Table([row + [""] * (2 - len(row))], colWidths=[half + 3 * mm] * 2,
+                         style=[("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    for t, png, why, _ in wide:
+        out.append(KeepTogether(block(t, png, why, 0.8 * CONTENT_W)))
+    return out
+
+
 def s_preprocessing(c: ReportContext, n: int) -> list[Flowable]:
     pre = c.config.preprocessing.model_dump(mode="json")
     out: list[Flowable] = [section(n, "Preprocessing")]
@@ -592,8 +625,12 @@ def build_report(ctx: ReportContext) -> bytes:
     doc.addPageTemplates([PageTemplate(id="p", frames=[Frame(MARGIN, 20 * mm, CONTENT_W, PAGE_H - 36 * mm, id="f", leftPadding=0,
                                                               rightPadding=0, topPadding=0, bottomPadding=0)])])
     story: list[Flowable] = s_cover(ctx)
-    for i, fn in enumerate([s_dataset, s_statistics, s_preprocessing, s_features, s_split, s_models, s_hyper, s_training,
-                            s_metrics, s_visuals, s_comparison, s_health, s_config], start=1):
-        story += fn(ctx, i)
+    n = 0
+    for fn in [s_dataset, s_statistics, s_dataset_charts, s_preprocessing, s_features, s_split, s_models, s_hyper, s_training,
+               s_metrics, s_visuals, s_comparison, s_health, s_config]:
+        part = fn(ctx, n + 1)
+        if part:  # optional sections (dataset charts) leave no gap in the numbering when absent
+            n += 1
+            story += part
     doc.build(story, canvasmaker=_NumberedCanvasFactory(footer))
     return buf.getvalue()

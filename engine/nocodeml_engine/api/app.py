@@ -14,6 +14,7 @@ import os
 import tempfile
 import threading
 import time
+import uuid as _uuid
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Callable
@@ -65,6 +66,7 @@ HEAVY_LIMITS = {                     # name -> (requests, seconds), per user
     "report": (6, 60),
     "preview": (60, 60),
 }
+PRODUCTION_ENV = "production"
 TRAIN_TIMEOUT_SECONDS = 600          # default cap on one training run (override: NOCODEML_TRAIN_TIMEOUT)
 
 
@@ -138,9 +140,14 @@ def _headline(model_result) -> dict:
 def create_app(client_factory: ClientFactory | None = None, cors_origins: list[str] | None = None,
                max_workers: int = 2, client_builder: Callable[[str], object] | None = None,
                limiter: RateLimiter | None = None, train_timeout: float | None = None,
-               rate_limits: dict | None = None) -> FastAPI:
+               rate_limits: dict | None = None, production: bool | None = None,
+               trust_proxy: bool | None = None) -> FastAPI:
     """`client_factory(token)` validates a token and returns (client, user_id) (network call).
     `client_builder(token)` just builds a client for an already-validated token (no network call)."""
+    if production is None:
+        production = os.environ.get("NOCODEML_ENV", "").lower() == PRODUCTION_ENV
+    if trust_proxy is None:
+        trust_proxy = os.environ.get("NOCODEML_TRUST_PROXY", "").lower() in ("1", "true", "yes")
     jobs = JobManager(max_workers=max_workers)
     cache = DataFrameCache()
     tokens = TokenCache()
@@ -155,7 +162,10 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         yield
         jobs.shutdown()
 
-    app = FastAPI(title="NoCodeML API", version="0.4.0", lifespan=lifespan)
+    # In production the interactive docs and the schema are not served (they advertise every endpoint).
+    app = FastAPI(title="NoCodeML API", version="0.4.0", lifespan=lifespan,
+                  docs_url=None if production else "/docs", redoc_url=None if production else "/redoc",
+                  openapi_url=None if production else "/openapi.json")
     app.state.jobs = jobs
 
     if client_factory is None:
@@ -176,19 +186,55 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             log.exception("unhandled error")  # details stay in the server log, never in the response
             return JSONResponse(status_code=500, content={"detail": "Internal server error.", "issues": []})
 
+    def client_ip(request: Request) -> str:
+        """The caller's address. Behind a reverse proxy every request arrives from the proxy, so the real client is
+        the *last* X-Forwarded-For entry (the one our own proxy appended; earlier ones can be forged by the caller).
+        Only trusted when NOCODEML_TRUST_PROXY is set, otherwise a caller could pick their own address."""
+        if trust_proxy:
+            fwd = request.headers.get("x-forwarded-for", "")
+            last = fwd.split(",")[-1].strip()
+            if last:
+                return last
+        return request.client.host if request.client else "unknown"
+
     @app.middleware("http")
     async def _ip_limit(request: Request, call_next):
         if request.method == "OPTIONS" or request.url.path == "/health":
             return await call_next(request)
-        ip = request.client.host if request.client else "unknown"
+        ip = client_ip(request)
         try:
             limiter.check("ip", ip, *limits["ip"])
         except RateLimited as e:
             return _too_many(e)
         return await call_next(request)
 
+    @app.middleware("http")
+    async def _observe(request: Request, call_next):
+        """Request id on every response, one access-log line per request (no query string, no tokens), and
+        conservative security headers. Registered last of the three, so it wraps the others and sees their responses."""
+        rid = _uuid.uuid4().hex[:12]
+        started = time.perf_counter()
+        response = await call_next(request)
+        ms = (time.perf_counter() - started) * 1000
+        log.info("%s %s -> %s %.0fms rid=%s", request.method, request.url.path, response.status_code, ms, rid)
+        response.headers["X-Request-ID"] = rid
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Cache-Control"] = "no-store"          # API responses are private to the signed-in user
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if production:
+            response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
     origins = cors_origins if cors_origins is not None else [
-        o for o in os.environ.get("NOCODEML_CORS_ORIGINS", "http://localhost:3000").split(",") if o]
+        o.strip() for o in os.environ.get("NOCODEML_CORS_ORIGINS", "" if production else "http://localhost:3000").split(",")
+        if o.strip()]
+    if production:
+        # Fail at startup rather than run with a browser policy that is wrong or wide open.
+        bad = [o for o in origins if o == "*" or not o.startswith("https://")]
+        if not origins or bad:
+            raise RuntimeError("In production NOCODEML_CORS_ORIGINS must list the web app's https:// origin(s) "
+                               f"(got {origins or 'nothing'}); '*' and http:// origins are not allowed.")
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"],
                        allow_headers=["Authorization", "Content-Type"])
 
@@ -338,6 +384,8 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     @app.delete("/projects/{project_id}", status_code=204)
     def delete_project(ctx=Depends(project_ctx)):
         svc, pid = ctx
+        if jobs.active_for(pid, svc.user_id):
+            raise HTTPException(409, "Training is still running for this project. Wait for it to finish, then delete it.")
         svc.delete_project(pid)
 
     # ---- datasets --------------------------------------------------------
@@ -647,11 +695,17 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
             ds_row = next((v for v in svc.dataset_versions(cfg.dataset.dataset_id) if v["version"] == cfg.dataset.version), None)
             label = f"v{version.version}.0 (finalized)" if version.status == VersionStatus.FINALIZED else f"v{version.version}"
+            prof = profile_dataset(df, cfg.dataset.target_column)
+            try:
+                dataset_charts = viz.auto_charts(df, prof, cfg.dataset.target_column)
+            except Exception:  # noqa: BLE001 - the report is still useful without its dataset charts
+                log.exception("dataset charts for report failed")
+                dataset_charts = []
             pdf = build_report(ReportContext(
                 project_name=svc.get_project(pid)["name"], experiment_number=number, result=exp.result, config=cfg,
                 pipeline_label=label, dataset_filename=(ds_row or {}).get("filename", "dataset.csv"),
-                dataset_version=cfg.dataset.version, profile=profile_dataset(df, cfg.dataset.target_column).to_dict(),
-                current=pipes.is_current(exp)))
+                dataset_version=cfg.dataset.version, profile=prof.to_dict(),
+                current=pipes.is_current(exp), extras={"dataset_charts": dataset_charts}))
         finally:
             report_slots.release()
         if found:  # force: replace

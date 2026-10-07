@@ -1,7 +1,7 @@
 # Supabase setup
 
 1. Create a project at supabase.com (or `supabase init && supabase start` locally).
-2. Apply the schema: paste `migrations/0001_schema.sql` into the SQL editor, or `supabase db push`.
+2. Apply the schema: paste `migrations/0001_schema.sql`, then `migrations/0002_hardening.sql`, into the SQL editor (or `supabase db push`).
    It creates the tables, row-level security, immutability triggers, the five private storage
    buckets and their policies.
 3. Authentication: Authentication -> Providers: enable Email, and Google / GitHub if wanted.

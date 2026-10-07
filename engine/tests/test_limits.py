@@ -123,3 +123,65 @@ def test_timeout_surfaces_as_a_clear_failed_job(churn_df, churn_config):
         assert job["status"] == "failed"
         assert "time limit" in job["error"]
         assert c.get(f"/projects/{pid}/experiments", headers=A).json() == []   # nothing half-saved
+
+
+# ---- hardening --------------------------------------------------------------
+
+def test_production_hides_docs_and_adds_strict_headers():
+    with make(production=True, cors_origins=["https://app.example.com"]) as c:
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert c.get(path).status_code == 404
+        h = c.get("/health").headers
+        assert h["strict-transport-security"].startswith("max-age=")
+        assert "frame-ancestors 'none'" in h["content-security-policy"]
+    with make(production=False) as c:
+        assert c.get("/docs").status_code == 200
+        assert "strict-transport-security" not in c.get("/health").headers
+
+
+def test_every_response_has_request_id_and_safe_headers_even_errors():
+    with make() as c:
+        for r in (c.get("/health"), c.get("/projects"), c.get("/nope")):      # ok, 401, 404
+            assert len(r.headers["x-request-id"]) == 12
+            assert r.headers["x-content-type-options"] == "nosniff"
+            assert r.headers["cache-control"] == "no-store"
+        assert c.get("/health").headers["x-request-id"] != c.get("/health").headers["x-request-id"]
+
+
+def test_production_refuses_unsafe_cors_origins(monkeypatch):
+    monkeypatch.delenv("NOCODEML_CORS_ORIGINS", raising=False)
+    for bad in (None, ["*"], ["http://app.example.com"], ["https://ok.example.com", "http://localhost:3000"]):
+        with pytest.raises(RuntimeError, match="CORS"):
+            make(production=True, **({} if bad is None else {"cors_origins": bad}))
+    make(production=True, cors_origins=["https://app.example.com"])           # fine
+
+
+def test_rate_limit_uses_forwarded_address_only_when_proxy_is_trusted():
+    hdr = lambda ip: {"X-Forwarded-For": f"6.6.6.6, {ip}"}  # noqa: E731   (first entry is attacker-controlled)
+    with make(rate_limits={"ip": (2, 60)}, trust_proxy=True) as c:
+        assert [c.get("/models", headers=hdr("1.1.1.1")).status_code for _ in range(3)] == [200, 200, 429]
+        assert c.get("/models", headers=hdr("2.2.2.2")).status_code == 200      # a different real client
+    with make(rate_limits={"ip": (2, 60)}, trust_proxy=False) as c:             # header ignored: all one client
+        assert [c.get("/models", headers=hdr(f"9.9.9.{i}")).status_code for i in range(3)] == [200, 200, 429]
+
+
+def test_cannot_delete_a_project_while_it_is_training(churn_df, churn_config, monkeypatch):
+    import threading
+    import nocodeml_engine.api.app as appmod
+    gate = threading.Event()
+    real = appmod.run_experiment
+    monkeypatch.setattr(appmod, "run_experiment", lambda *a, **k: (gate.wait(10), real(*a, **k))[1])
+    with make() as c:
+        pid, ds = setup_project(c, churn_df)
+        c.put(f"/projects/{pid}/pipeline", json=body_for(churn_config, ds["dataset_id"]), headers=A)
+        job = c.post(f"/projects/{pid}/training", headers=A).json()
+        r = c.delete(f"/projects/{pid}", headers=A)
+        assert r.status_code == 409 and "Training is still running" in r.json()["detail"]
+        gate.set()
+        for _ in range(200):
+            if c.get(f"/projects/{pid}/training/{job['id']}", headers=A).json()["status"] != "running":
+                break
+            time.sleep(0.1)
+        assert c.delete(f"/projects/{pid}", headers=A).status_code == 204
+        assert c.get(f"/projects/{pid}", headers=A).status_code == 404
+        assert c.delete(f"/projects/{pid}", headers=B).status_code == 404       # not anyone else's either

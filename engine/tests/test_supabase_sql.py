@@ -26,7 +26,7 @@ def _find_bin():
 BIN = _find_bin()
 pytestmark = pytest.mark.skipif(BIN is None, reason="postgres binaries not found")
 
-MIGRATION = Path(__file__).parents[2] / "supabase" / "migrations" / "0001_schema.sql"
+MIGRATIONS = sorted((Path(__file__).parents[2] / "supabase" / "migrations").glob("*.sql"))   # applied in order
 STUB = Path(__file__).parent / "supabase_stub.sql"
 
 
@@ -43,7 +43,8 @@ def dsn(tmp_path_factory):
     dsn = f"host=127.0.0.1 port={port} dbname=postgres user=postgres"
     with psycopg.connect(dsn, autocommit=True) as c:
         c.execute(STUB.read_text())
-        c.execute(MIGRATION.read_text())
+        for m in MIGRATIONS:
+            c.execute(m.read_text())
     yield dsn
     subprocess.run([BIN / "pg_ctl", "-D", d / "data", "-m", "immediate", "stop"], capture_output=True)
 
@@ -197,3 +198,31 @@ def test_storage_policies(db, users):
     assert db.q("select file_size_limit from storage.buckets where id='datasets'")[0][0] == 104857600
     assert {r[0] for r in db.q("select id from storage.buckets")} == {
         "datasets", "models", "pipelines", "reports", "visualizations"}
+
+
+def test_internal_functions_are_not_callable_through_the_api_roles(db, users):
+    a, _ = users
+    pid = new_project(db, a)
+    for role_setup in (lambda: db.admin().c.execute("set role anon"), lambda: db.as_user(a)):
+        for fn in ("public.touch_project()", "public.touch_self()", "public.guard_experiment()"):
+            role_setup()
+            fails(db, f"select {fn}", match="permission denied")
+    db.admin().c.execute("set role anon")
+    fails(db, "select public.owns_project(%s)", pid, match="permission denied")
+    # signed-in users keep owns_project: it is evaluated inside their own row-level-security policies
+    assert db.as_user(a).q("select public.owns_project(%s)", pid) == [(True,)]
+    assert db.as_user(a).q("select count(*) from pipeline_versions") == [(0,)]
+
+
+def test_search_path_is_pinned_on_trigger_functions(db, users):
+    rows = db.admin().q("""select p.proname, p.proconfig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                           where n.nspname = 'public' and p.proname in ('touch_self','guard_pipeline_version','guard_experiment')""")
+    assert len(rows) == 3 and all(r[1] and any("search_path" in x for x in r[1]) for r in rows)
+
+
+def test_projects_policies_still_isolate_owners_after_the_rewrite(db, users):
+    a, b = users
+    pid = new_project(db, a)
+    assert db.as_user(b).q("select count(*) from projects") == [(0,)]
+    assert db.as_user(b).q("delete from projects where id = %s returning id", pid) == []
+    assert db.as_user(a).q("delete from projects where id = %s returning id", pid) == [(pid,)]

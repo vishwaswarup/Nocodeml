@@ -454,7 +454,7 @@ def test_pdf_report_generation_storage_and_access(env, churn_df, churn_config):
     pdf = store.objects[("reports", art["storage_path"])]
     assert pdf.startswith(b"%PDF") and art["size_bytes"] == len(pdf)
     text = "\n".join(p.extract_text() for p in PdfReader(_io.BytesIO(pdf)).pages)
-    assert "Churn" in text and "customers.csv" in text and "Experiment #1" in text and "13. Final pipeline configuration" in text
+    assert "Churn" in text and "customers.csv" in text and "Experiment #1" in text and "14. Final pipeline configuration" in text
 
     # listed with the other artifacts, downloadable through a signed link
     arts = c.get(f"/projects/{pid}/experiments/1/artifacts", headers=A).json()

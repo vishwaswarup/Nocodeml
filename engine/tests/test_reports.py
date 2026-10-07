@@ -124,3 +124,46 @@ def test_many_columns_are_truncated_with_a_note(churn_df, churn_config):
     c, _ = ctx_for(wide, cfg)
     _, text = read(build_report(c))
     assert re.search(r"Showing 30 of \d+ numerical columns", text)
+
+
+def _regression_cfg(df):
+    return make_config(TaskType.REGRESSION, "price", [ModelConfig(model_key="ridge")],
+                       preprocessing=PreprocessingConfig(scaling=ScalingStrategy.STANDARD,
+                                                         encoding=[EncodingRule(column="city", strategy=EncodingStrategy.ONE_HOT)]),
+                       split=SplitConfig(method=SplitMethod.K_FOLD, n_splits=3))
+
+
+def _with_charts(df, cfg):
+    from nocodeml_engine import visualization as viz
+    ctx, _ = ctx_for(df, cfg)
+    prof = profile_dataset(df, cfg.dataset.target_column)
+    ctx.extras = {"dataset_charts": viz.auto_charts(df, prof, cfg.dataset.target_column)}
+    return ctx
+
+
+def test_dataset_charts_section_is_inserted_and_numbering_follows(churn_df, churn_config):
+    ctx = _with_charts(churn_df, churn_config)
+    kinds = {s["type"] for s in ctx.extras["dataset_charts"]}
+    assert "class_balance" in kinds
+    plain = build_report(ctx_for(churn_df, churn_config)[0])
+    pdf = build_report(ctx)
+    reader, text = read(pdf)
+    titles = ["2. Dataset statistics", "3. Dataset charts", "4. Preprocessing", "14. Final pipeline configuration"]
+    pos = [text.index(t) for t in titles]
+    assert pos == sorted(pos)
+    assert "before any preprocessing" in text and "Class balance of" in text
+    base_images = sum(len(p.images) for p in read(plain)[0].pages)
+    assert sum(len(p.images) for p in reader.pages) >= base_images + len(ctx.extras["dataset_charts"])
+    assert pdf == build_report(ctx)                                          # still deterministic
+
+
+def test_regression_dataset_charts_and_a_broken_chart_is_skipped(housing_df):
+    from nocodeml_engine.config import PipelineConfig  # noqa: F401
+    import nocodeml_engine.reports.builder as b
+    cfg = _regression_cfg(housing_df)
+    ctx = _with_charts(housing_df, cfg)
+    assert {s["type"] for s in ctx.extras["dataset_charts"]} & {"distribution", "correlation"}
+    ctx.extras["dataset_charts"].append({"type": "distribution", "title": "Broken", "why": "x", "data": {}})
+    ctx.extras["dataset_charts"].append({"type": "unknown_kind", "title": "Mystery", "why": "x", "data": {}})
+    _, text = read(b.build_report(ctx))
+    assert "3. Dataset charts" in text and "Broken" not in text and "Mystery" not in text
