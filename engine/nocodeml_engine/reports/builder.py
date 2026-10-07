@@ -84,6 +84,7 @@ DESCRIPTIONS = {
     "ridge": "Linear regression that shrinks its coefficients (L2).",
     "lasso": "Linear regression that can zero out features (L1).",
     "gradient_boosting": "Trees built one after another, each fixing the last one's mistakes.",
+    "xgboost": "A fast, heavily tuned form of gradient boosting with built-in L1/L2 penalties. Often a top performer on tables.",
 }
 MISSING_WORDS = {"mean": "filled with the mean", "median": "filled with the median", "mode": "filled with the most common value",
                  "constant": "filled with a constant", "knn": "filled from the nearest rows (KNN)",

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from nocodeml_engine.api.app import create_app
+from nocodeml_engine.models.registry import XGBOOST_AVAILABLE
 
 from .fake_supabase import FakeStore, FakeSupabase
 
@@ -70,7 +71,8 @@ def test_health_and_models_are_public(env):
     assert c.get("/health").json() == {"status": "ok"}
     models = c.get("/models", params={"task": "regression"}).json()
     assert {m["key"] for m in models} == {"linear_regression", "ridge", "lasso", "decision_tree",
-                                          "random_forest", "gradient_boosting"}
+                                          "random_forest", "gradient_boosting",
+                                          *(["xgboost"] if XGBOOST_AVAILABLE else [])}
     rf = next(m for m in models if m["key"] == "random_forest")
     assert rf["regularization"]["kind"] == "complexity" and rf["hyperparameters"]
     assert c.get("/models", params={"task": "bogus"}).status_code == 422

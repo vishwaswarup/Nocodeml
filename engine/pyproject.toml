@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib>=3.8",
     "reportlab>=4.0",
     "pydantic>=2.0",
+    "xgboost>=2.0",   # optional at runtime; on macOS it also needs `brew install libomp`
 ]
 
 [project.optional-dependencies]

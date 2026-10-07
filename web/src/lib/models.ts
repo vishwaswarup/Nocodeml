@@ -40,6 +40,7 @@ export const DESCRIPTIONS: Record<string, string> = {
   ridge: "Linear regression that shrinks its coefficients (L2). Steadier when features are correlated.",
   lasso: "Linear regression that can zero out features (L1). Doubles as feature selection.",
   gradient_boosting: "Trees built one after another, each fixing the last one's mistakes. Often the most accurate.",
+  xgboost: "A fast, heavily tuned form of gradient boosting with built-in L1/L2 penalties. Often a top performer on tables.",
 };
 
 /** A small, diverse starting set: a linear model, a tree ensemble and one more. */

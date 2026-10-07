@@ -11,7 +11,9 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import numpy as np
 from sklearn.ensemble import (
+    GradientBoostingClassifier,
     GradientBoostingRegressor,
     RandomForestClassifier,
     RandomForestRegressor,
@@ -142,6 +144,39 @@ def _recommend_forest(n_rows: int, n_features: int) -> dict[str, Any]:
     }
 
 
+# XGBoost is optional at runtime: if the package (or its OpenMP runtime on macOS: `brew install libomp`) is
+# missing, the model simply isn't offered instead of breaking the app.
+try:
+    from xgboost import XGBClassifier, XGBRegressor
+except Exception:  # noqa: BLE001 - ImportError, or XGBoostError when the native library can't load
+    XGBClassifier = XGBRegressor = None
+
+XGBOOST_AVAILABLE = XGBClassifier is not None
+
+if XGBOOST_AVAILABLE:
+    class NoCodeMLXGBClassifier(XGBClassifier):
+        """XGBClassifier that accepts any set of integer class labels.
+
+        XGBoost insists the training labels are exactly 0..k-1. In cross-validation a training fold can lack a rare
+        class, which would crash the run; here labels are re-indexed internally and mapped back, so `classes_`,
+        `predict` and `predict_proba` describe the classes actually seen (as scikit-learn's own models do)."""
+
+        def fit(self, X, y, **kw):
+            self._seen = np.unique(np.asarray(y))
+            self._fitting = True          # while XGBoost itself runs, `classes_` must be its own 0..k-1
+            try:
+                return super().fit(X, np.searchsorted(self._seen, np.asarray(y)), **kw)
+            finally:
+                self._fitting = False
+
+        @property
+        def classes_(self):
+            return np.arange(len(self._seen)) if getattr(self, "_fitting", False) else self._seen
+
+        def predict(self, X, **kw):
+            return self._seen[np.asarray(super().predict(X, **kw)).astype(int)]
+
+
 MODEL_REGISTRY: dict[str, ModelSpec] = {}
 
 
@@ -201,7 +236,7 @@ _register(ModelSpec(
 ))
 _register(ModelSpec(
     key="gradient_boosting", name="Gradient Boosting",
-    estimators={_R: GradientBoostingRegressor},
+    estimators={_C: GradientBoostingClassifier, _R: GradientBoostingRegressor},
     requires_scaling=False,
     hyperparameters=(
         HyperParam("n_estimators", "int", 100, min=10, max=1000),
@@ -210,13 +245,39 @@ _register(ModelSpec(
         HyperParam("subsample", "float", 1.0, min=0.1, max=1.0, advanced=True),
         HyperParam("min_samples_leaf", "int", 1, min=1, max=1000, advanced=True),
     ),
-    regularization={_R: RegularizationSpec(
+    regularization={t: RegularizationSpec(
         kind="complexity",
         complexity_params=("learning_rate", "max_depth", "subsample", "min_samples_leaf"),
-        note="Shrinkage (learning_rate), shallow trees and subsampling limit overfitting.")},
+        note="Shrinkage (learning_rate), shallow trees and subsampling limit overfitting.") for t in (_C, _R)},
     cost="medium", interpretability="low",
     recommend=lambda n, f: {"n_estimators": 200, "learning_rate": 0.05, "max_depth": 3},
 ))
+if XGBOOST_AVAILABLE:
+    _XGB_COMPLEXITY = ("learning_rate", "max_depth", "subsample", "colsample_bytree", "min_child_weight",
+                       "reg_alpha", "reg_lambda")
+    _XGB_REG = RegularizationSpec(
+        kind="complexity", complexity_params=_XGB_COMPLEXITY,
+        note="Shrinkage (learning_rate), shallow trees, row/column subsampling and the L1 (reg_alpha) and "
+             "L2 (reg_lambda) penalties on leaf weights limit overfitting.")
+    _register(ModelSpec(
+        key="xgboost", name="XGBoost",
+        estimators={_C: NoCodeMLXGBClassifier, _R: XGBRegressor},
+        requires_scaling=False,
+        hyperparameters=(
+            HyperParam("n_estimators", "int", 100, min=10, max=2000, description="Number of boosting rounds (trees)."),
+            HyperParam("learning_rate", "float", 0.1, min=0.001, max=1.0),
+            HyperParam("max_depth", "int", 6, min=1, max=20),
+            HyperParam("subsample", "float", 1.0, min=0.1, max=1.0, advanced=True),
+            HyperParam("colsample_bytree", "float", 1.0, min=0.1, max=1.0, advanced=True),
+            HyperParam("min_child_weight", "float", 1.0, min=0.0, max=100.0, advanced=True),
+            HyperParam("reg_alpha", "float", 0.0, min=0.0, max=1000.0, advanced=True, description="L1 penalty on leaf weights."),
+            HyperParam("reg_lambda", "float", 1.0, min=0.0, max=1000.0, advanced=True, description="L2 penalty on leaf weights."),
+        ),
+        regularization={_C: _XGB_REG, _R: _XGB_REG},
+        cost="medium", interpretability="low",
+        recommend=lambda n, f: {"n_estimators": 200, "learning_rate": 0.05,
+                                "max_depth": 4 if n < 5_000 else 6, "subsample": 0.8, "colsample_bytree": 0.8},
+    ))
 _register(ModelSpec(
     key="svm", name="Support Vector Machine",
     estimators={_C: SVC},
@@ -341,4 +402,8 @@ def build_estimator(cfg: ModelConfig, task: TaskType, n_rows: int, n_features: i
     cls = spec.estimators[task]
     if "random_state" in cls().get_params():
         params["random_state"] = random_state
+    if cfg.model_key == "xgboost":
+        # fixed, not user-facing: exact-enough and fast histogram trees, quiet, and a modest thread count so one
+        # training job doesn't take every core of a shared server
+        params.update(tree_method="hist", n_jobs=2, verbosity=0)
     return cls(**params)

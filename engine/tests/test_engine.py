@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from nocodeml_engine.models.registry import XGBOOST_AVAILABLE
 from nocodeml_engine.artifacts import export_artifacts, load_pipeline
 from nocodeml_engine.config import (
     DateFeature, DateFeatureRule, EncodingRule, EncodingStrategy, FeatureEngineeringConfig,
@@ -195,7 +196,8 @@ def test_model_aware_regularization():
     with pytest.raises(ModelConfigError, match="no hyperparameter"):
         validate_model_config(ModelConfig(model_key="knn", hyperparameters={"bogus": 1}), C)
     assert {m.key for m in models_for_task(TaskType.REGRESSION)} == {
-        "linear_regression", "ridge", "lasso", "decision_tree", "random_forest", "gradient_boosting"}
+        "linear_regression", "ridge", "lasso", "decision_tree", "random_forest", "gradient_boosting",
+        *(["xgboost"] if XGBOOST_AVAILABLE else [])}
 
 
 def test_logistic_regularization_variants_train(churn_df, churn_config):

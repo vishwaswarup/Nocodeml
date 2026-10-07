@@ -104,7 +104,9 @@ def preview_models(config: PipelineConfig) -> dict[str, list[str]]:
             est = build_estimator(m, config.dataset.task, 1000, 10, config.split.random_state)
             # sklearn only rejects bad values (e.g. C=-1) at fit time unless asked to check now.
             # _validate_params is sklearn's own pre-fit check; tests pin that it still exists.
-            est._validate_params()
+            # (XGBoost isn't a scikit-learn class and has no such hook; its values are range-checked by the registry.)
+            if hasattr(type(est), "_parameter_constraints"):
+                est._validate_params()
         except ModelConfigError as e:
             out.setdefault(m.model_key, []).append(str(e))
         except Exception as e:  # noqa: BLE001 - sklearn rejecting a parameter combination
