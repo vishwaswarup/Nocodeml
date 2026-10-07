@@ -44,6 +44,7 @@ from nocodeml_engine.reports import ReportContext, build_report
 from nocodeml_engine.profiling import profile_dataset
 from nocodeml_engine.splitting import SplitError
 from nocodeml_engine.state import PipelineError, VersionStatus
+from nocodeml_engine import visualization as viz
 from nocodeml_engine.training import ConfigurationError, check_config, run_experiment
 
 log = logging.getLogger("nocodeml.api")
@@ -119,6 +120,10 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     @app.exception_handler(PreprocessingError)
     async def _prep(_: Request, e: PreprocessingError):
         return err(422, "Preprocessing configuration is not valid.", e.issues)
+
+    @app.exception_handler(viz.ChartError)
+    async def _chart(_: Request, e: viz.ChartError):
+        return err(422, str(e), [str(e)])
 
     @app.exception_handler(ConfigurationError)
     @app.exception_handler(SplitError)
@@ -260,6 +265,41 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         rows = json.loads(part.to_json(orient="records", date_format="iso"))
         return RowsPage(columns=[{"name": str(c), "dtype": str(df[c].dtype)} for c in df.columns],
                         rows=rows, total=total, page=page, page_size=page_size)
+
+    # ---- charts (Section 0): small aggregated data, never raw rows --------------
+
+    def chart_df(ctx, dataset_id: UUID):
+        svc, _ = ctx
+        return load_df(svc, str(dataset_id))
+
+    @app.get("/projects/{project_id}/datasets/{dataset_id}/charts/auto")
+    def charts_auto(dataset_id: UUID, target: str | None = None, ctx=Depends(project_ctx)):
+        """A sensible default set of charts, each with the reason it was chosen."""
+        df = chart_df(ctx, dataset_id)
+        if target is not None and target not in df.columns:
+            raise HTTPException(422, f"Unknown column '{target}'.")
+        return viz.auto_charts(df, profile_dataset(df, target), target)
+
+    @app.get("/projects/{project_id}/datasets/{dataset_id}/charts/distribution")
+    def chart_distribution(dataset_id: UUID, column: str, bins: int = Query(30, ge=3, le=100), ctx=Depends(project_ctx)):
+        return viz.histogram(chart_df(ctx, dataset_id), column, bins)
+
+    @app.get("/projects/{project_id}/datasets/{dataset_id}/charts/categories")
+    def chart_categories(dataset_id: UUID, column: str, top: int = Query(12, ge=3, le=30), ctx=Depends(project_ctx)):
+        return viz.categories(chart_df(ctx, dataset_id), column, top)
+
+    @app.get("/projects/{project_id}/datasets/{dataset_id}/charts/correlation")
+    def chart_correlation(dataset_id: UUID, target: str | None = None, columns: list[str] | None = Query(default=None, max_length=30),
+                          ctx=Depends(project_ctx)):
+        return viz.correlation(chart_df(ctx, dataset_id), target, columns)
+
+    @app.get("/projects/{project_id}/datasets/{dataset_id}/charts/missing")
+    def chart_missing(dataset_id: UUID, ctx=Depends(project_ctx)):
+        return viz.missing_overview(chart_df(ctx, dataset_id))
+
+    @app.get("/projects/{project_id}/datasets/{dataset_id}/charts/scatter")
+    def chart_scatter(dataset_id: UUID, x: str, y: str, ctx=Depends(project_ctx)):
+        return viz.scatter(chart_df(ctx, dataset_id), x, y)
 
     # ---- pipeline --------------------------------------------------------
 
