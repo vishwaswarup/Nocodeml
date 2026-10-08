@@ -199,8 +199,8 @@ def test_path_ids_must_be_uuids(env):
 def test_upload_rejections(env, churn_df, monkeypatch):
     c, store, _ = env
     pid = c.post("/projects", json={"name": "p"}, headers=A).json()["id"]
-    r = c.post(f"/projects/{pid}/datasets", files={"file": ("a.xlsx", io.BytesIO(b"x"), "application/x")}, headers=A)
-    assert r.status_code == 400 and "Only .csv" in r.json()["detail"]
+    r = c.post(f"/projects/{pid}/datasets", files={"file": ("a.xls", io.BytesIO(b"x"), "application/x")}, headers=A)
+    assert r.status_code == 400 and "Only .csv, .xlsx and .parquet" in r.json()["detail"]
     r = c.post(f"/projects/{pid}/datasets", files={"file": ("a.csv", io.BytesIO(b"a,b\n"), "text/csv")}, headers=A)
     assert r.status_code == 400
     import nocodeml_engine.api.app as appmod

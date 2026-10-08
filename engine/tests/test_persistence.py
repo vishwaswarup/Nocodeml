@@ -91,9 +91,9 @@ def test_users_cannot_see_each_others_projects(store, churn_df):
 
 
 @pytest.mark.parametrize("name,data,msg", [
-    ("data.xlsx", b"a,b\n1,2\n", "Only .csv"),
+    ("data.xls", b"a,b\n1,2\n", "Only .csv, .xlsx and .parquet"),
     ("empty.csv", b"a,b\n", "no rows"),
-    ("bad.csv", b"", "Could not parse"),
+    ("bad.csv", b"", "Could not read the CSV"),
 ])
 def test_dataset_validation_rejects_and_stores_nothing(svc, store, name, data, msg):
     p = svc.create_project("p")
