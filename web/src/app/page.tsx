@@ -39,7 +39,7 @@ const runs = [
 ];
 
 const steps = [
-  ["Upload", "Drop in a CSV. Every column is profiled: types, gaps, outliers, identifiers, imbalance."],
+  ["Upload", "Drop in a CSV, Excel or Parquet file. Every column is profiled: types, gaps, outliers, identifiers, imbalance."],
   ["Configure", "Pick preprocessing and up to five models. Each choice comes with a reason, so you can move fast."],
   ["Compare", "Train once and see every model side by side, on the same split, against a baseline."],
   ["Tweak & re-run", "Change a hyperparameter or a preprocessing step, re-run, and compare with the last run."],

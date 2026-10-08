@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Play } from "lucide-react";
+import { ChevronDown, Play, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { StatusIcon } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Card, Eyebrow } from "@/components/ui/card";
 import { Switch } from "@/components/ui/choice";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui/feedback";
 import { api } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import { asModels, sameModels, trainingParams, useModels } from "@/lib/models";
 import { pipelineBody } from "@/lib/pipeline";
 import { useModelIssues } from "@/lib/use-model-issues";
@@ -59,6 +60,7 @@ function Loaded({ projectId, cfg, goTo, onSaved }: {
   const [job, setJob] = useState<Job | null>(null);
   const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const issues = useModelIssues(projectId, cfg, draft);
@@ -128,12 +130,26 @@ function Loaded({ projectId, cfg, goTo, onSaved }: {
     setStarting(true);
     setError(null);
     try {
+      // A fresh sign-in token, so it can't run out while the (possibly long) training saves its results.
+      await supabase().auth.refreshSession().catch(() => { /* the server says so if the token is too old */ });
       setJob(await api<Job>(`/projects/${projectId}/training`, { method: "POST" }));
       setNow(Date.now());
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setStarting(false);
+    }
+  };
+
+  const cancel = async () => {
+    if (!job) return;
+    setCancelling(true);
+    try {
+      setJob(await api<Job>(`/projects/${projectId}/training/${job.id}/cancel`, { method: "POST" }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -201,11 +217,17 @@ function Loaded({ projectId, cfg, goTo, onSaved }: {
             <Card className="p-5" aria-live="polite">
               {busy && (
                 <>
-                  <p className="text-[15px]">{job.status === "queued" ? "Waiting to start…" : `Training ${draft.length} model${draft.length === 1 ? "" : "s"}…`}</p>
+                  <p className="text-[15px]">
+                    {job.cancel_requested ? "Cancelling…"
+                      : job.status === "queued" ? `Waiting to start${job.queue_position && job.queue_position > 1 ? ` (${job.queue_position - 1} ahead of you)` : ""}…`
+                      : `Training ${draft.length} model${draft.length === 1 ? "" : "s"}…`}
+                  </p>
                   <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-3">
                     <div className="h-full w-1/3 animate-pulse rounded-full signature-gradient-x" />
                   </div>
                   <p className="mt-2 font-mono text-[12px] text-fg-subtle tabular">{elapsed}s elapsed</p>
+                  <Button variant="ghost" size="sm" className="mt-3" icon={<X className="size-3.5" />} loading={cancelling}
+                    disabled={job.cancel_requested} onClick={cancel}>Cancel training</Button>
                 </>
               )}
               {job.status === "succeeded" && (
@@ -213,6 +235,12 @@ function Loaded({ projectId, cfg, goTo, onSaved }: {
                   <p className="flex items-center gap-2 text-[15px]"><StatusIcon status="pass" /> Finished in {elapsed}s</p>
                   {job.warnings.map((w) => <p key={w} className="mt-2 text-[12.5px] text-warn">{w}</p>)}
                   <Button className="mt-3 w-full" onClick={() => goTo(7)}>View results</Button>
+                </>
+              )}
+              {job.status === "cancelled" && (
+                <>
+                  <p className="flex items-center gap-2 text-[15px]"><StatusIcon status="warn" /> Training was cancelled</p>
+                  <p className="mt-2 text-[13px] text-fg-muted">Nothing was saved. Change anything you like and train again.</p>
                 </>
               )}
               {job.status === "failed" && (

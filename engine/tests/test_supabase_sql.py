@@ -226,3 +226,56 @@ def test_projects_policies_still_isolate_owners_after_the_rewrite(db, users):
     assert db.as_user(b).q("select count(*) from projects") == [(0,)]
     assert db.as_user(b).q("delete from projects where id = %s returning id", pid) == []
     assert db.as_user(a).q("delete from projects where id = %s returning id", pid) == [(pid,)]
+
+
+# ---- 0003: training jobs ------------------------------------------------------------------------------------
+
+def new_job(db, pid, status="queued"):
+    return db.q("insert into training_jobs (project_id, status) values (%s, %s) returning id", pid, status)[0][0]
+
+
+def test_only_one_active_job_per_project_but_history_is_unlimited(db, users):
+    a, b = users
+    pid = new_project(db, a)
+    j1 = new_job(db.as_user(a), pid)
+    fails(db, "insert into training_jobs (project_id) values (%s)", pid, match="duplicate key|unique")
+    fails(db, "insert into training_jobs (project_id, status) values (%s, 'running')", pid, match="duplicate key|unique")
+    db.q("update training_jobs set status = 'succeeded', finished_at = now() where id = %s", j1)
+    j2 = new_job(db, pid)                                              # free again once the first has finished
+    db.q("update training_jobs set status = 'failed' where id = %s", j2)
+    new_job(db, pid)
+    other = new_project(db, a, "Other")
+    new_job(db, other)                                                 # a different project is independent
+    assert len(db.q("select id from training_jobs where project_id = %s", pid)) == 3
+
+
+def test_jobs_are_private_to_the_project_owner(db, users):
+    a, b = users
+    pid = new_project(db, a)
+    jid = new_job(db.as_user(a), pid)
+    assert db.as_user(b).q("select count(*) from training_jobs") == [(0,)]
+    assert db.q("update training_jobs set status = 'failed' where id = %s returning id", jid) == []
+    fails(db, "insert into training_jobs (project_id) values (%s)", pid, match="row-level security")
+    db.admin().c.execute("set role anon")
+    fails(db, "select * from training_jobs", match="permission denied")
+
+
+def test_a_finished_job_cannot_be_changed_or_deleted_and_status_is_checked(db, users):
+    a, _ = users
+    pid = new_project(db, a)
+    jid = new_job(db.as_user(a), pid)
+    fails(db, "update training_jobs set status = 'bogus' where id = %s", jid, match="check")
+    db.q("update training_jobs set status = 'cancelled', finished_at = now() where id = %s", jid)
+    for sql in ("update training_jobs set status = 'running' where id = %s",
+                "update training_jobs set error = 'rewritten' where id = %s"):
+        fails(db, sql, jid, match="finished and can no longer change")
+    fails(db, "delete from training_jobs where id = %s", jid, match="permission denied")
+
+
+def test_jobs_go_away_with_their_project_and_the_guard_function_is_not_an_api_endpoint(db, users):
+    a, _ = users
+    pid = new_project(db, a)
+    new_job(db.as_user(a), pid)
+    db.q("delete from projects where id = %s", pid)
+    assert db.admin().q("select count(*) from training_jobs where project_id = %s", pid) == [(0,)]
+    fails(db.as_user(a), "select public.guard_training_job()", match="permission denied")

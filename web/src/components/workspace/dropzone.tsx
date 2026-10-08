@@ -6,6 +6,8 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 export const MAX_UPLOAD = 100 * 1024 * 1024;
+export const DATASET_EXTENSIONS = [".csv", ".xlsx", ".parquet"];
+export const DATASET_ACCEPT = DATASET_EXTENSIONS.join(",");
 
 export function Dropzone({ onFile, busy }: { onFile: (f: File) => void; busy: boolean }) {
   const input = useRef<HTMLInputElement>(null);
@@ -21,9 +23,9 @@ export function Dropzone({ onFile, busy }: { onFile: (f: File) => void; busy: bo
       <span className="mb-5 inline-flex size-12 items-center justify-center rounded-full bg-surface-2 text-fg">
         <FileUp className="size-5" />
       </span>
-      <p className="text-[19px] tracking-[-0.02em]">{busy ? "Uploading and profiling…" : "Drop a CSV file here"}</p>
-      <p className="mt-1.5 text-[14px] text-fg-muted">Up to 100 MB. Every column is profiled automatically.</p>
-      <input ref={input} type="file" accept=".csv,text/csv" className="sr-only" aria-label="Choose CSV file"
+      <p className="text-[19px] tracking-[-0.02em]">{busy ? "Uploading and profiling…" : "Drop a dataset here"}</p>
+      <p className="mt-1.5 text-[14px] text-fg-muted">CSV, Excel (.xlsx, first sheet) or Parquet. Up to 100 MB. Every column is profiled automatically.</p>
+      <input ref={input} type="file" accept={DATASET_ACCEPT} className="sr-only" aria-label="Choose dataset file"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
       <Button className="mt-6" loading={busy} onClick={() => input.current?.click()}>Choose file</Button>
     </div>

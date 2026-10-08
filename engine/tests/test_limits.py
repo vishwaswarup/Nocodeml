@@ -99,13 +99,19 @@ def test_bad_token_does_not_spend_a_users_budget():
 
 def test_full_queue_is_a_clear_503_and_not_a_crash():
     import threading
+    store = FakeStore()
+    uid = str(uuid.uuid4())
+    db = FakeSupabase(store, uid)
+    from nocodeml_engine.persistence import ProjectService
+    svc = ProjectService(db, uid)
+    pids = [svc.create_project(f"p{i}")["id"] for i in range(3)]
     jm = JobManager(max_workers=1, max_waiting=1)
     gate = threading.Event()
-    jm.submit("p1", "u", lambda j: (gate.wait(5), 1)[1])   # occupies the worker
-    time.sleep(0.1)
-    jm.submit("p2", "u", lambda j: 2)                       # waits
+    jm.submit(svc.jobs(), pids[0], lambda j, c: (gate.wait(5), 1)[1])   # occupies the worker
+    time.sleep(0.2)
+    jm.submit(svc.jobs(), pids[1], lambda j, c: 2)                       # waits
     with pytest.raises(JobBusy):
-        jm.submit("p3", "u", lambda j: 3)
+        jm.submit(svc.jobs(), pids[2], lambda j, c: 3)
     gate.set()
     jm.shutdown()
 

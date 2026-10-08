@@ -40,19 +40,17 @@ def _inner_cv(config: PipelineConfig, task: TaskType, y: pd.Series, folds: int):
 class _DeadlineScorer:
     """Wraps a scorer so a search stops (raises) once the training time limit has passed."""
 
-    def __init__(self, scorer, deadline: float | None):
-        self.scorer, self.deadline = scorer, deadline
+    def __init__(self, scorer, deadline: float | None, cancel=None):
+        self.scorer, self.deadline, self.cancel = scorer, deadline, cancel
 
     def __call__(self, estimator, X, y):
-        if self.deadline is not None and time.monotonic() > self.deadline:
-            from nocodeml_engine.training.runner import TrainingTimeout
-            raise TrainingTimeout("Training took longer than the time limit and was stopped. "
-                                  "Try fewer models, fewer folds or a smaller search.")
+        from nocodeml_engine.training.runner import _check_deadline
+        _check_deadline(self.deadline, self.cancel)
         return self.scorer(estimator, X, y)
 
 
 def run_search(pipe: Pipeline, X: pd.DataFrame, y: pd.Series, model_cfg: ModelConfig, config: PipelineConfig,
-               n_classes: int | None, deadline: float | None) -> tuple[Pipeline, dict[str, Any]]:
+               n_classes: int | None, deadline: float | None, cancel=None) -> tuple[Pipeline, dict[str, Any]]:
     """Search `model_cfg.search` on (X, y) and return (best pipeline refitted on all of X, summary)."""
     from sklearn.metrics import get_scorer
 
@@ -62,7 +60,7 @@ def run_search(pipe: Pipeline, X: pd.DataFrame, y: pd.Series, model_cfg: ModelCo
     scoring = scoring_name(task, n_classes)
     grid = {f"model__{k}": list(v) for k, v in sr.space.items()}
     cv = _inner_cv(config, task, y, sr.cv_folds)
-    common: dict[str, Any] = dict(estimator=pipe, scoring=_DeadlineScorer(get_scorer(scoring), deadline), cv=cv,
+    common: dict[str, Any] = dict(estimator=pipe, scoring=_DeadlineScorer(get_scorer(scoring), deadline, cancel), cv=cv,
                                   refit=True, n_jobs=1, error_score="raise", return_train_score=False)
     if sr.method == "grid":
         search = GridSearchCV(param_grid=grid, **common)

@@ -172,9 +172,10 @@ export type ModelConfig = {
 export type ModelDefaults = Record<string, { recommended: Record<string, unknown>; defaults: Record<string, unknown>; n_rows: number; n_features: number }>;
 
 export type Job = {
-  id: string; project_id: string; status: "queued" | "running" | "succeeded" | "failed";
+  id: string; project_id: string; status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   created_at: string; started_at: string | null; finished_at: string | null;
   experiment_number: number | null; error: string | null; issues: string[]; warnings: string[];
+  cancel_requested?: boolean; queue_position?: number | null;
 };
 
 /* ---- Section 7: results ---- */

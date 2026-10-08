@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 PKS = {"projects": ("id",), "datasets": ("id",), "dataset_versions": ("id",),
        "pipeline_versions": ("project_id", "version"), "experiments": ("project_id", "number"),
-       "artifacts": ("id",)}
+       "artifacts": ("id",), "training_jobs": ("id",)}
 UNIQUE = {"experiments": [("project_id", "experiment_id")],
           "dataset_versions": [("storage_path",)], "artifacts": [("bucket", "storage_path")]}
 
@@ -86,6 +86,13 @@ class _Query:
                         raise ValueError(f"duplicate key {key}")
                     r.update(row)
                     return SimpleNamespace(data=[copy.deepcopy(r)])
+            if self.t == "training_jobs":    # partial unique index: one queued/running job per project
+                row.setdefault("status", "queued")
+                row.setdefault("heartbeat_at", datetime.now(timezone.utc).isoformat())
+                row.setdefault("cancel_requested", False)
+                if row["status"] in ("queued", "running") and any(
+                        r["project_id"] == row["project_id"] and r["status"] in ("queued", "running") for r in rows):
+                    raise ValueError('duplicate key value violates unique constraint "training_jobs_one_active" (23505)')
             for cols in UNIQUE.get(self.t, []):
                 if any(all(r[c] == row[c] for c in cols) for r in rows):
                     raise ValueError(f"unique violation {cols}")
@@ -98,6 +105,8 @@ class _Query:
         hit = [r for r in rows if self._match(r)]
         if self.op == "update":
             for r in hit:
+                if self.t == "training_jobs" and r["status"] in ("succeeded", "failed", "cancelled"):
+                    raise ValueError(f"training job {r['id']} is finished and can no longer change")
                 r.update(self.payload)
         else:
             for r in hit:

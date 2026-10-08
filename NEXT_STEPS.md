@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-07._
 
-## Done (all verified: 151 backend tests, 245 browser checks)
+## Done (all verified: 163 backend tests, 245 browser checks)
 - Core ML engine, versioned pipelines, experiments, finalize, compare (Phases 1-2)
 - Supabase: schema + row-level security + private storage, Google + email login (Phase 3)
 - FastAPI: auth, datasets, pipeline, background training, results, downloads (Phase 4)
@@ -13,12 +13,10 @@ _Last updated 2026-10-07._
 - PDF experiment report, signed downloads, experiment-vs-experiment comparison
 
 ## Do next, in this order
-1. **Real job queue** (rate limiting + training time limit are DONE, 2026-10-07)
-   - Done: per-user and per-IP rate limits (429 + Retry-After; uploads 10/min, training 6/min, reports 6/min,
-     previews 60/min, 300/min overall per user, 600/min per IP), training time limit
-     (`NOCODEML_TRAIN_TIMEOUT`, default 600s, checked between models/folds), queue cap (503 when 20 waiting).
-   - Still to do: replace the in-memory thread pool with Celery/RQ + Redis so job status survives restarts,
-     training runs off the API process, and the rate-limit counters are shared across API processes.
+1. ~~Job queue~~ DONE 2026-10-08 as a *database-backed* queue (migration 0003): durable status, DB-enforced one active job per
+   project, heartbeat + crash recovery, cancel, queue position, 3 active per user. Deliberately NOT Celery/Redis: workers
+   would need a master key or the user's refresh token (the API only holds each user's short-lived token), and a single
+   API process is enough for a private beta. Revisit (Redis + dedicated workers) if/when training load outgrows one box.
 2. ~~Dataset charts in the PDF report~~ DONE 2026-10-07 (new section 3 "Dataset charts"; report is now 14 sections).
 3. **Local runner** (spec section 27/47): train on the user's own machine so data never leaves it.
 4. ~~Pre-launch hardening~~ code side DONE 2026-10-07. What remains is dashboard clicks: see **DEPLOY.md**
@@ -33,7 +31,7 @@ _Last updated 2026-10-07._
 - Clustering workflow (K-Means, DBSCAN, Agglomerative)
 - Model deployment / generated prediction API
 - Optional "explain my results" LLM feature (core app stays deterministic)
-- Parquet / Excel upload
+- ~~Parquet / Excel upload~~ DONE 2026-10-08 (.csv, .xlsx first sheet, .parquet; .xls refused on purpose)
 - Section 7 extras: learning curve, calibration curve, PR curve
 
 ## Housekeeping reminders

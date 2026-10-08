@@ -13,6 +13,7 @@ import pandas as pd
 from pydantic import BaseModel
 
 from nocodeml_engine.dataset.loader import SUPPORTED_FORMATS, DatasetFormatError, dataset_format, parse_dataset
+from nocodeml_engine.persistence.jobs import JobStore
 from nocodeml_engine.persistence.repository import SupabasePipelineRepository
 from nocodeml_engine.profiling import profile_dataset
 from nocodeml_engine.state import PipelineService, VersionStatus
@@ -71,6 +72,9 @@ class ProjectService:
     def __init__(self, client, user_id: str):
         self.db = client
         self.user_id = str(user_id)
+
+    def jobs(self) -> JobStore:
+        return JobStore(self.db, self.user_id)
 
     # -- projects ----------------------------------------------------------
 

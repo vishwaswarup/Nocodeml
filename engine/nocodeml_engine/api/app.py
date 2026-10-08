@@ -68,12 +68,25 @@ HEAVY_LIMITS = {                     # name -> (requests, seconds), per user
     "preview": (60, 60),
 }
 PRODUCTION_ENV = "production"
+EXPIRY_MARGIN_SECONDS = 120          # a sign-in must outlast the training time limit by this much to start a job
 TRAIN_TIMEOUT_SECONDS = 600          # default cap on one training run (override: NOCODEML_TRAIN_TIMEOUT)
 
 
 TOKEN_TTL_SECONDS = 15    # how long a validated token is trusted before Supabase is asked again
 TOKEN_CACHE_SIZE = 512
 _now = time.monotonic     # indirection so tests can move time
+
+
+def token_seconds_left(token: str) -> float | None:
+    """Seconds until a JWT access token expires, read from its `exp` claim (not verified: Supabase already did that).
+    None if it can't be read (not a JWT, no exp)."""
+    import base64
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return float(claims["exp"]) - time.time()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class TokenCache:
@@ -389,7 +402,7 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     @app.delete("/projects/{project_id}", status_code=204)
     def delete_project(ctx=Depends(project_ctx)):
         svc, pid = ctx
-        if jobs.active_for(pid, svc.user_id):
+        if jobs.active_for(svc.jobs(), pid):
             raise HTTPException(409, "Training is still running for this project. Wait for it to finish, then delete it.")
         svc.delete_project(pid)
 
@@ -594,11 +607,11 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     # ---- training --------------------------------------------------------
 
     def train_job(svc: ProjectService, pid: str):
-        def work(job: Job) -> int:
+        def work(job: Job, cancel: threading.Event) -> int:
             pipes = svc.pipelines(pid)
             cfg = pipes.latest(pid).config
             df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
-            run = run_experiment(df, cfg, deadline=time.monotonic() + timeout)
+            run = run_experiment(df, cfg, deadline=time.monotonic() + timeout, cancel=cancel)
             exp = pipes.record_experiment(run.result)
             try:
                 with tempfile.TemporaryDirectory() as d:
@@ -612,15 +625,21 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         return work
 
     @app.post("/projects/{project_id}/training", status_code=202)
-    def start_training(ctx=Depends(project_ctx), _rl=Depends(heavy("train"))):
+    def start_training(ctx=Depends(project_ctx), _rl=Depends(heavy("train")),
+                       creds: HTTPAuthorizationCredentials | None = Depends(bearer)):
         """Queue training of the latest pipeline version. Poll the returned job."""
         svc, pid = ctx
+        # The job saves its results with the caller's own token. If that token would expire mid-run, the results
+        # could not be saved, so refuse up front with something the user can act on.
+        left = token_seconds_left(creds.credentials) if creds else None
+        if left is not None and left < timeout + EXPIRY_MARGIN_SECONDS:
+            raise HTTPException(401, "Your sign-in is about to expire. Reload the page and try again.")
         pipes = svc.pipelines(pid)
         latest = pipes.latest(pid)
         if not latest.config.models:
             raise HTTPException(422, "Select at least one model before training.")
         try:
-            return jobs.submit(pid, svc.user_id, train_job(svc, pid))
+            return jobs.submit(svc.jobs(), pid, train_job(svc, pid))
         except JobConflict as e:
             raise HTTPException(409, str(e)) from None
         except JobBusy as e:
@@ -629,15 +648,29 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     @app.get("/projects/{project_id}/training/active")
     def active_training(ctx=Depends(project_ctx)):
         svc, pid = ctx
-        return jobs.active_for(pid, svc.user_id)
+        return jobs.active_for(svc.jobs(), pid)
 
     @app.get("/projects/{project_id}/training/{job_id}")
     def training_status(job_id: str, ctx=Depends(project_ctx)):
         svc, pid = ctx
-        job = jobs.get(job_id, pid, svc.user_id)
+        job = jobs.get(svc.jobs(), job_id, pid)
         if job is None:
             raise HTTPException(404, "Job not found.")
         return job
+
+    @app.post("/projects/{project_id}/training/{job_id}/cancel")
+    def cancel_training(job_id: str, ctx=Depends(project_ctx)):
+        """Ask a queued or running training to stop. It stops at its next step and nothing is saved."""
+        svc, pid = ctx
+        job = jobs.cancel(svc.jobs(), job_id, pid)
+        if job is None:
+            raise HTTPException(404, "Job not found.")
+        return job
+
+    @app.get("/projects/{project_id}/training")
+    def training_history(ctx=Depends(project_ctx)):
+        svc, pid = ctx
+        return svc.jobs().recent(pid)
 
     # ---- experiments -----------------------------------------------------
 

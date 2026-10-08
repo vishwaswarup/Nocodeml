@@ -13,7 +13,7 @@ import { bytes, fmt, int } from "@/lib/format";
 import type { DatasetInfo, DatasetProfile, PipelineSaved, ProjectState, Task } from "@/lib/types";
 import { DataViewer } from "./data-viewer";
 import { ExploreSection } from "./explore-section";
-import { Dropzone, MAX_UPLOAD } from "./dropzone";
+import { DATASET_ACCEPT, DATASET_EXTENSIONS, Dropzone, MAX_UPLOAD } from "./dropzone";
 
 const KIND_LABEL = { numerical: "num", categorical: "cat", datetime: "date" } as const;
 
@@ -27,7 +27,11 @@ export function DatasetSection({ projectId, state, onChanged }: {
   const [uploadError, setUploadError] = useState<{ title: string; issues?: string[] } | null>(null);
 
   const upload = async (file: File, replaceId?: string) => {
-    if (!file.name.toLowerCase().endsWith(".csv")) return setUploadError({ title: "Only .csv files are supported for now." });
+    const name = file.name.toLowerCase();
+    if (!DATASET_EXTENSIONS.some((ext) => name.endsWith(ext))) {
+      return setUploadError({ title: name.endsWith(".xls") ? "Old .xls workbooks aren't supported. Save it as .xlsx or .csv first."
+        : "Only .csv, .xlsx and .parquet files are supported." });
+    }
     if (file.size > MAX_UPLOAD) return setUploadError({ title: `This file is ${bytes(file.size)}; the limit is 100 MB.` });
     setUploadError(null);
     setUploading(true);
@@ -49,7 +53,7 @@ export function DatasetSection({ projectId, state, onChanged }: {
       <div className="mx-auto max-w-3xl">
         <Eyebrow>Section 0</Eyebrow>
         <h1 className="mt-2 text-h1">Upload a dataset</h1>
-        <p className="mt-2 mb-8 text-[16px] text-fg-muted">Start with a CSV. NoCodeML profiles it before you make any decisions.</p>
+        <p className="mt-2 mb-8 text-[16px] text-fg-muted">Start with a CSV, Excel (.xlsx) or Parquet file. NoCodeML profiles it before you make any decisions. For Excel, the first sheet is used and its first row must be the column names.</p>
         <Dropzone onFile={(f) => upload(f)} busy={uploading} />
         {uploadError && <div className="mt-4"><ErrorState title={uploadError.title} issues={uploadError.issues} /></div>}
       </div>
@@ -152,7 +156,7 @@ function LoadedDataset({ projectId, datasetId, state, onChanged, onReplace, uplo
           )}
         </div>
         <div>
-          <input ref={replaceInput} type="file" accept=".csv,text/csv" className="sr-only" aria-label="Upload new version"
+          <input ref={replaceInput} type="file" accept={DATASET_ACCEPT} className="sr-only" aria-label="Upload new version"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onReplace(f); e.target.value = ""; }} />
           <Button variant="secondary" size="sm" icon={<RefreshCw className="size-3.5" />} loading={uploading}
             onClick={() => replaceInput.current?.click()}>Upload new version</Button>

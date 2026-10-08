@@ -1,25 +1,30 @@
 """Background training jobs.
 
-MVP design: an in-process thread pool. Job *status* is in memory (lost on restart), but every
-finished experiment is persisted in the database, so results are never lost. Replace with a
-real queue (Celery/RQ) when training moves off the API process.
+Job *records* live in the database (`training_jobs`), so status survives an API restart and the database itself
+guarantees one active job per project. The training itself still runs in this process, on a small thread pool.
+
+How a crash is noticed: every queued/running job writes a heartbeat every few seconds. If a job's heartbeat has gone
+quiet and this process isn't running it, whoever looks at it next marks it failed ("interrupted"), so nothing hangs
+forever as "running". (Training can't be resumed after a crash because the API only ever holds the signed-in user's
+short-lived token, never a master key; the user simply trains again.)
 """
 
 from __future__ import annotations
 
+import logging
 import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
 
-from pydantic import BaseModel, Field
+from nocodeml_engine.persistence.jobs import ACTIVE, Job, JobConflict, JobStore, now_iso  # noqa: F401 (re-exported)
+from nocodeml_engine.training import TrainingCancelled
 
-MAX_TRACKED_JOBS = 200
+log = logging.getLogger("nocodeml.jobs")
 
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+HEARTBEAT_SECONDS = 10
+STALE_SECONDS = 60          # silent this long and not running here => the process that held it is gone
+MAX_ACTIVE_PER_USER = 3     # across all of a user's projects
 
 
 def _is_network_error(e: BaseException) -> bool:
@@ -32,80 +37,151 @@ def _is_network_error(e: BaseException) -> bool:
     return isinstance(e, (ConnectionError, TimeoutError))
 
 
-class Job(BaseModel):
-    id: str
-    project_id: str
-    owner_id: str
-    status: str = "queued"  # queued | running | succeeded | failed
-    created_at: str
-    started_at: str | None = None
-    finished_at: str | None = None
-    experiment_number: int | None = None
-    error: str | None = None
-    issues: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
-
-
-class JobConflict(RuntimeError):
-    pass
-
-
 class JobBusy(RuntimeError):
-    """Too many jobs are already waiting; the user should try again shortly."""
+    """Too many jobs are already waiting (server-wide) or running for this user."""
+
+
+class _Live:
+    """What this process knows about a job it is holding."""
+
+    def __init__(self, job: Job):
+        self.job = job
+        self.cancel = threading.Event()
+        self.stop_heartbeat = threading.Event()
 
 
 class JobManager:
-    def __init__(self, max_workers: int = 2, max_waiting: int = 20):
-        self._max_waiting = max_waiting
+    def __init__(self, max_workers: int = 2, max_waiting: int = 20, heartbeat: float = HEARTBEAT_SECONDS,
+                 stale: float = STALE_SECONDS):
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="train")
-        self._jobs: dict[str, Job] = {}
+        self._max_waiting, self._heartbeat, self._stale = max_waiting, heartbeat, stale
+        self._live: dict[str, _Live] = {}
+        self._order: list[str] = []   # queued job ids, oldest first (for queue positions)
         self._lock = threading.Lock()
 
-    def submit(self, project_id: str, owner_id: str, fn: Callable[[Job], int]) -> Job:
-        """fn(job) runs in a worker and returns the experiment number."""
+    # -- submitting ------------------------------------------------------------------------------------------
+
+    def submit(self, store: JobStore, project_id: str, fn: Callable[[Job, threading.Event], int]) -> Job:
+        """fn(job, cancel) runs in a worker thread, returns the experiment number, and should stop soon after
+        `cancel` is set."""
         with self._lock:
-            if any(j.project_id == project_id and j.status in ("queued", "running")
-                   for j in self._jobs.values()):
-                raise JobConflict("A training job is already running for this project.")
-            waiting = sum(1 for j in self._jobs.values() if j.status == "queued")
-            if waiting >= self._max_waiting:
+            if len(self._order) >= self._max_waiting:
                 raise JobBusy("The training queue is full right now. Please try again in a few minutes.")
-            job = Job(id=uuid.uuid4().hex, project_id=project_id, owner_id=owner_id,
-                      created_at=_now())
-            self._jobs[job.id] = job
-            for old in list(self._jobs)[:-MAX_TRACKED_JOBS]:
-                if self._jobs[old].status in ("succeeded", "failed"):
-                    del self._jobs[old]
-        self._pool.submit(self._run, job, fn)
-        return job
+            mine = sum(1 for lv in self._live.values() if lv.job.owner_id == store.user_id)
+            if mine >= MAX_ACTIVE_PER_USER:
+                raise JobBusy(f"You already have {MAX_ACTIVE_PER_USER} trainings in progress. Wait for one to finish.")
+        self.reap(store, project_id)              # a crashed job must not block a new one
+        job = store.create(project_id)            # raises JobConflict if one is already active (database-enforced)
+        live = _Live(job)
+        with self._lock:
+            self._live[job.id] = live
+            self._order.append(job.id)
+        threading.Thread(target=self._beat, args=(store, live), daemon=True, name=f"beat-{job.id[:6]}").start()
+        self._pool.submit(self._run, store, live, fn)
+        return self._with_position(job)
 
-    def _run(self, job: Job, fn: Callable[[Job], int]) -> None:
-        job.status, job.started_at = "running", _now()
+    def _beat(self, store: JobStore, live: _Live) -> None:
+        while not live.stop_heartbeat.wait(self._heartbeat):
+            try:
+                store.heartbeat(live.job.id)
+                if store.cancel_requested(live.job.id):   # a cancel asked of any API process reaches this one here
+                    live.cancel.set()
+            except Exception as e:  # noqa: BLE001 - a missed beat is harmless; several in a row look like a crash
+                log.warning("heartbeat failed for job %s: %s", live.job.id, e)
+
+    def _run(self, store: JobStore, live: _Live, fn: Callable[[Job, threading.Event], int]) -> None:
+        job = live.job
         try:
-            job.experiment_number = fn(job)
-            job.status = "succeeded"
-        except Exception as e:  # noqa: BLE001 - surfaced to the user, see messages below
-            job.status = "failed"
-            issues = getattr(e, "issues", None)
-            if issues:
-                job.issues = list(issues)
-            if _is_network_error(e):
-                job.error = "Lost the connection to the database while training. Nothing was saved; please train again."
-            else:
-                job.error = str(e) if isinstance(e, (ValueError, RuntimeError)) else "Training failed unexpectedly."
+            with self._lock:
+                if job.id in self._order:
+                    self._order.remove(job.id)
+            if live.cancel.is_set():
+                self._finish(store, live, "cancelled", error="Cancelled before it started.")
+                return
+            job.started_at = now_iso()
+            store.update(job.id, status="running", started_at=job.started_at)
+            job.status = "running"
+            try:
+                job.experiment_number = fn(job, live.cancel)
+                self._finish(store, live, "succeeded")
+            except TrainingCancelled:
+                self._finish(store, live, "cancelled", error="Cancelled. Nothing was saved.")
+            except Exception as e:  # noqa: BLE001 - surfaced to the user, see messages below
+                issues = getattr(e, "issues", None)
+                if issues:
+                    job.issues = list(issues)
+                if _is_network_error(e):
+                    msg = "Lost the connection to the database while training. Nothing was saved; please train again."
+                elif isinstance(e, (ValueError, RuntimeError)):
+                    msg = str(e)
+                else:
+                    log.exception("training job %s failed", job.id)
+                    msg = "Training failed unexpectedly."
+                self._finish(store, live, "failed", error=msg)
+        except Exception:  # noqa: BLE001 - e.g. the database is unreachable while recording the outcome
+            log.exception("could not record the outcome of job %s", job.id)
         finally:
-            job.finished_at = _now()
+            live.stop_heartbeat.set()
+            with self._lock:
+                self._live.pop(job.id, None)
+                if job.id in self._order:
+                    self._order.remove(job.id)
 
-    def get(self, job_id: str, project_id: str, owner_id: str) -> Job | None:
-        j = self._jobs.get(job_id)
-        return j if j and j.project_id == project_id and j.owner_id == owner_id else None
+    def _finish(self, store: JobStore, live: _Live, status: str, error: str | None = None) -> None:
+        job = live.job
+        job.status, job.error, job.finished_at = status, error, now_iso()
+        store.update(job.id, status=status, error=error, finished_at=job.finished_at,
+                     experiment_number=job.experiment_number, issues=job.issues, warnings=job.warnings)
 
-    def active_for(self, project_id: str, owner_id: str) -> Job | None:
+    # -- reading ---------------------------------------------------------------------------------------------
+
+    def _with_position(self, job: Job) -> Job:
+        with self._lock:
+            pos = self._order.index(job.id) + 1 if job.id in self._order else None
+        return job.model_copy(update={"queue_position": pos}) if job.status == "queued" else job
+
+    def _is_live(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._live
+
+    def reap(self, store: JobStore, project_id: str) -> None:
+        """If the project's active job is orphaned (its process died), mark it failed."""
+        job = store.active(project_id)
+        if job is None or self._is_live(job.id):
+            return
+        beat = store.last_heartbeat(job.id)
+        if beat is None or (datetime.now(timezone.utc) - beat).total_seconds() < self._stale:
+            return
+        log.warning("job %s was orphaned (no heartbeat since %s); marking it failed", job.id, beat)
+        store.update(job.id, status="failed", finished_at=now_iso(), error=(
+            "Training was interrupted (the server restarted or lost power). Nothing was saved; please train again."))
+
+    def get(self, store: JobStore, job_id: str, project_id: str) -> Job | None:
+        self.reap(store, project_id)
+        job = store.get(job_id, project_id)
+        return self._with_position(job) if job else None
+
+    def active_for(self, store: JobStore, project_id: str) -> Job | None:
         """The queued/running job of this project, if any (lets a reloaded page re-attach)."""
-        for j in self._jobs.values():
-            if j.project_id == project_id and j.owner_id == owner_id and j.status in ("queued", "running"):
-                return j
-        return None
+        self.reap(store, project_id)
+        job = store.active(project_id)
+        return self._with_position(job) if job else None
+
+    def cancel(self, store: JobStore, job_id: str, project_id: str) -> Job | None:
+        job = store.get(job_id, project_id)
+        if job is None:
+            return None
+        if job.status in ACTIVE:
+            store.update(job.id, cancel_requested=True)          # visible to every API process
+            with self._lock:
+                live = self._live.get(job.id)
+            if live:
+                live.cancel.set()                                 # the running training notices at its next step
+            job.cancel_requested = True
+        return self._with_position(job)
 
     def shutdown(self) -> None:
+        with self._lock:
+            for lv in self._live.values():
+                lv.stop_heartbeat.set()
         self._pool.shutdown(wait=False, cancel_futures=True)

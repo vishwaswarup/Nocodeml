@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -32,7 +33,13 @@ class TrainingTimeout(RuntimeError):
     """Training ran longer than the allowed time and was stopped between steps."""
 
 
-def _check_deadline(deadline: float | None) -> None:
+class TrainingCancelled(RuntimeError):
+    """The user cancelled the run; it stopped between steps and nothing was saved."""
+
+
+def _check_deadline(deadline: float | None, cancel: "threading.Event | None" = None) -> None:
+    if cancel is not None and cancel.is_set():
+        raise TrainingCancelled("Training was cancelled.")
     if deadline is not None and time.monotonic() > deadline:
         raise TrainingTimeout("Training took longer than the time limit and was stopped. "
                               "Try fewer models, fewer folds or a smaller dataset.")
@@ -121,7 +128,7 @@ def _baseline_metrics(task, y_true_raw: pd.Series, preds: np.ndarray, classes):
     return {"r2": m["r2"], "rmse": m["rmse"], "mae": m["mae"]}
 
 
-def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: float | None = None):
+def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: float | None = None, cancel=None):
     task = config.dataset.task
     pm = primary_metric(task)
     spec = get_spec(model_cfg.model_key)
@@ -134,9 +141,9 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: fl
 
     if plan.mode == "holdout":
         f = plan.folds[0]
-        _check_deadline(deadline)
+        _check_deadline(deadline, cancel)
         Xtr, ytr = X.iloc[f.train], y.iloc[f.train]
-        fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes, deadline)
+        fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes, deadline, cancel)
         fold_rows.append((fp.n_rows_fitted + fp.n_outlier_rows_removed, len(f.train)))
         metrics["train"] = _eval(fp, Xtr, ytr)
         if f.validation is not None:
@@ -149,10 +156,10 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: fl
     else:
         oof_idx, oof_true, oof_pred, oof_score, base_pred, train_primary = [], [], [], [], [], []
         for f in plan.folds:
-            _check_deadline(deadline)
+            _check_deadline(deadline, cancel)
             Xtr, ytr = X.iloc[f.train], y.iloc[f.train]
             Xte, yte = X.iloc[f.test], y.iloc[f.test]
-            fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes, deadline)
+            fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes, deadline, cancel)
             fold_rows.append((fp.n_rows_fitted + fp.n_outlier_rows_removed, len(f.train)))
             m = _eval(fp, Xte, yte)
             fold_scores.append(m[pm])
@@ -176,7 +183,7 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: fl
         metrics["cv"][f"{pm}_fold_std"] = float(np.std(fold_scores))
         metrics["train"] = {pm: float(np.mean(train_primary))}
         baseline = _baseline_metrics(task, y_oof, np.concatenate(base_pred), classes)
-        final = fit_pipeline(X, y, config, model_cfg, classes, deadline)  # exported model sees all data
+        final = fit_pipeline(X, y, config, model_cfg, classes, deadline, cancel)  # exported model sees all data
 
     result = ModelResult(
         model_key=model_cfg.model_key, name=spec.name, hyperparameters=resolved_params(final),
@@ -188,8 +195,9 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: fl
 
 
 def run_experiment(df: pd.DataFrame, config: PipelineConfig,
-                   experiment_id: str | None = None, deadline: float | None = None) -> ExperimentRun:
-    """`deadline` is an absolute time.monotonic() value; checked before each model and fold."""
+                   experiment_id: str | None = None, deadline: float | None = None, cancel=None) -> ExperimentRun:
+    """`deadline` is an absolute time.monotonic() value and `cancel` a threading.Event; both are checked before each
+    model and fold (and between the settings of a hyperparameter search)."""
     started = datetime.now(timezone.utc)
     _validate(df, config)
     target = config.dataset.target_column
@@ -223,7 +231,7 @@ def run_experiment(df: pd.DataFrame, config: PipelineConfig,
 
     results, pipelines, fitted_rows = [], {}, {}
     for m in config.models:
-        r, fp, rows = _train_model(m, config, X, y, plan, classes, deadline)
+        r, fp, rows = _train_model(m, config, X, y, plan, classes, deadline, cancel)
         results.append(r)
         pipelines[m.model_key] = fp
         fitted_rows[m.model_key] = rows

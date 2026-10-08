@@ -77,7 +77,7 @@ class FittedPipeline:
 
 
 def fit_pipeline(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, model_cfg: ModelConfig,
-                 classes: list | None = None, deadline: float | None = None) -> FittedPipeline:
+                 classes: list | None = None, deadline: float | None = None, cancel=None) -> FittedPipeline:
     """Fit FE + preprocessing + model on (X, y). Call with TRAIN rows only."""
     task = config.dataset.task
     rs = config.split.random_state
@@ -102,7 +102,7 @@ def fit_pipeline(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, model_cf
     if model_cfg.search is not None:
         from nocodeml_engine.training.search import run_search
         pipe, summary = run_search(pipe, X_raw, y_f, model_cfg, config,
-                                   len(le.classes_) if le is not None else None, deadline)
+                                   len(le.classes_) if le is not None else None, deadline, cancel)
     else:
         pipe.fit(X_raw, y_f)
     return FittedPipeline(pipe, task, config.dataset.target_column, model_cfg.model_key,
