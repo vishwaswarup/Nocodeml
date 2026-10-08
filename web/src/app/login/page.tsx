@@ -111,6 +111,9 @@ export default function LoginPage() {
 
         <p className="mt-10 text-center text-[13px] leading-relaxed text-fg-subtle">
           Your datasets stay private to your account.
+          <br />
+          By continuing you agree to the <Link href="/terms" className="underline underline-offset-2 hover:text-fg">Terms</Link> and{" "}
+          <Link href="/privacy" className="underline underline-offset-2 hover:text-fg">Privacy Policy</Link>.
         </p>
       </div>
     </main>

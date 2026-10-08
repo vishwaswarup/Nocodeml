@@ -168,6 +168,7 @@ export default function Home() {
           <div className="flex gap-16 text-[15px]">
             <div className="flex flex-col gap-2.5"><span className="text-fg">Product</span><a className="text-fg-muted hover:text-fg" href="#why">Why NoCodeML</a><a className="text-fg-muted hover:text-fg" href="#how">How it works</a></div>
             <div className="flex flex-col gap-2.5"><span className="text-fg">Project</span><a className="text-fg-muted hover:text-fg" href="#faq">FAQ</a><Link className="text-fg-muted hover:text-fg" href="/design">Design system</Link></div>
+            <div className="flex flex-col gap-2.5"><span className="text-fg">Legal</span><Link className="text-fg-muted hover:text-fg" href="/privacy">Privacy Policy</Link><Link className="text-fg-muted hover:text-fg" href="/terms">Terms of Use</Link></div>
           </div>
         </div>
       </footer>

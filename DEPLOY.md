@@ -32,16 +32,31 @@ Run **one** API process for now: the rate-limit counters live in memory and trai
 (Job status itself is in the database, so a restart no longer loses it; a job running during a restart is marked
 "interrupted" and the user trains again.)
 
+### Container (optional)
+`engine/Dockerfile` builds the API for any container host (Render, Railway, Fly, a VPS):
+```
+cd engine && docker build -t nocodeml-api .
+docker run --rm -p 8000:8000 -e SUPABASE_URL=... -e SUPABASE_ANON_KEY=... \
+  -e NOCODEML_CORS_ORIGINS=https://app.yourdomain.com nocodeml-api
+```
+It runs in production mode, as a non-root user, with one worker. Built and tested 2026-10-08: starts and reports healthy;
+refuses to start without https CORS origins; hides /docs; XGBoost, hyperparameter search, Parquet and the PDF report
+all work inside it (image is about 1.9 GB, first build takes several minutes on a slow connection).
+
 ## 3. Web app environment
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_URL=https://api.yourdomain.com`
 
 ## 4. Sign-in settings **(you)**
 - [ ] Supabase -> Authentication -> URL Configuration: Site URL = your production web URL; add
       `https://app.yourdomain.com/auth/callback` to Redirect URLs. Remove localhost entries once live (or keep them only in a dev project).
-- [ ] Google Cloud -> Google Auth Platform -> Audience: publish the app (Testing -> In production), otherwise only
-      listed test users can sign in. Add the production domain under Branding / Authorized domains.
-- [ ] Rotate the Google OAuth client secret that was shown in a screenshot (new secret in Google Cloud, paste into
-      Supabase -> Authentication -> Providers -> Google, delete the old one).
+- [ ] Google Cloud -> Google Auth Platform -> Branding: App name `NoCodeML`; **User support email** = your own Google
+      account (`vishwaswarup.756@gmail.com`; Google only accepts the owner's address or a Google Group you manage);
+      **Developer contact** = `nocodemachinelearning@gmail.com`; Application home page = your site; Privacy policy link =
+      `https://YOUR-DOMAIN/privacy`; Terms link = `https://YOUR-DOMAIN/terms`; Authorized domain = your domain.
+- [ ] Google Auth Platform -> Audience: publish the app (Testing -> In production), otherwise only listed test users
+      can sign in. Only the basic email/profile scopes are used, so no Google verification review is needed.
+- [ ] (Owner decided NOT to rotate the Google client secret that was shown in a screenshot. Accepted risk; revisit if the
+      screenshot was ever shared beyond the owner.)
 - [ ] Authentication -> Providers -> Email: decide whether to keep email sign-in; if yes, turn on "Confirm email" and,
       on a plan that has it, **Leaked password protection** (Authentication -> Sign In / Providers -> password security).
 - [ ] Delete the throw-away test accounts used for automated tests from the production project.
@@ -63,6 +78,7 @@ delete the project. Check `/docs` returns 404 and that a request from a differen
 - No Content-Security-Policy on the web app yet (needs a nonce setup tested on the real domain).
 - Rate-limit counters are per process and training runs inside the API process (single API process; a separate worker
   fleet would need a token strategy because the API only holds each user's short-lived sign-in token).
-- No privacy policy / terms pages yet. Google's production consent screen and your users' trust both need them
-  (datasets are user data): add before inviting anyone outside your own accounts.
+- The privacy policy and terms (`/privacy`, `/terms`) are plain-language drafts written for this app, not legal advice.
+  Have someone qualified review them before a public launch, and add a governing-law clause if you want one.
+- No self-service account deletion: the policy promises deletion within 30 days on request by email.
 - No account-deletion self-service (deleting a project works; deleting the account is done in the Supabase dashboard).
