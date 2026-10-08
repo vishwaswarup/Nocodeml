@@ -152,6 +152,24 @@ class SplitConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+SEARCH_MAX_PARAMS = 6          # hyperparameters searched at once
+SEARCH_MAX_VALUES = 10         # candidate values per hyperparameter
+SEARCH_MAX_CANDIDATES = 40     # settings tried per model (grid size, or n_iter for random search)
+SEARCH_MAX_FITS = 150          # candidates x inner folds: bounds the cost of tuning one model
+
+
+class SearchConfig(BaseModel):
+    """Hyperparameter search for one model.
+
+    Tuning is done on the training rows only, by cross-validation inside them, so the validation/test rows never
+    influence which settings are chosen. `space` maps a hyperparameter name to the candidate values to try."""
+
+    method: Literal["grid", "random"] = "random"
+    space: dict[str, list[Any]]
+    n_iter: int = 10        # random search only: how many settings to sample
+    cv_folds: int = 3       # inner cross-validation folds
+
+
 class ModelConfig(BaseModel):
     model_key: str  # must match a key in MODEL_REGISTRY
     # Model-aware regularization, e.g. {"type": "l2", "strength": 1.0}. The
@@ -159,6 +177,7 @@ class ModelConfig(BaseModel):
     regularization: dict[str, Any] = Field(default_factory=dict)
     hyperparameters: dict[str, Any] = Field(default_factory=dict)
     use_recommended_defaults: bool = True
+    search: SearchConfig | None = None   # None = train once with the settings above
 
 
 # ---------------------------------------------------------------------------

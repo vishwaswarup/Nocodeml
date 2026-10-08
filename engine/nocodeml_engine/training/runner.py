@@ -61,7 +61,11 @@ def config_hash(config: PipelineConfig) -> str:
     The version number is deliberately excluded, and keys are sorted: Postgres jsonb re-orders object
     keys, so a config must hash the same before and after a round trip through the database.
     """
-    canonical = json.dumps(config.model_dump(mode="json", exclude={"version"}), sort_keys=True, separators=(",", ":"))
+    data = config.model_dump(mode="json", exclude={"version"})
+    for m in data.get("models", []):
+        if m.get("search") is None:      # configs written before hyperparameter search existed must keep their hash
+            m.pop("search", None)
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
@@ -132,7 +136,7 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: fl
         f = plan.folds[0]
         _check_deadline(deadline)
         Xtr, ytr = X.iloc[f.train], y.iloc[f.train]
-        fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes)
+        fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes, deadline)
         fold_rows.append((fp.n_rows_fitted + fp.n_outlier_rows_removed, len(f.train)))
         metrics["train"] = _eval(fp, Xtr, ytr)
         if f.validation is not None:
@@ -148,7 +152,7 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: fl
             _check_deadline(deadline)
             Xtr, ytr = X.iloc[f.train], y.iloc[f.train]
             Xte, yte = X.iloc[f.test], y.iloc[f.test]
-            fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes)
+            fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes, deadline)
             fold_rows.append((fp.n_rows_fitted + fp.n_outlier_rows_removed, len(f.train)))
             m = _eval(fp, Xte, yte)
             fold_scores.append(m[pm])
@@ -172,13 +176,14 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: fl
         metrics["cv"][f"{pm}_fold_std"] = float(np.std(fold_scores))
         metrics["train"] = {pm: float(np.mean(train_primary))}
         baseline = _baseline_metrics(task, y_oof, np.concatenate(base_pred), classes)
-        final = fit_pipeline(X, y, config, model_cfg, classes)  # exported model sees all data
+        final = fit_pipeline(X, y, config, model_cfg, classes, deadline)  # exported model sees all data
 
     result = ModelResult(
         model_key=model_cfg.model_key, name=spec.name, hyperparameters=resolved_params(final),
         metrics=metrics, fold_primary_scores=[float(s) for s in fold_scores], primary_metric=pm,
         baseline=baseline, n_rows_fitted=final.n_rows_fitted,
-        n_outlier_rows_removed=outliers_removed, fit_seconds=round(time.perf_counter() - t0, 3))
+        n_outlier_rows_removed=outliers_removed, fit_seconds=round(time.perf_counter() - t0, 3),
+        search=final.search)
     return result, final, fold_rows
 
 

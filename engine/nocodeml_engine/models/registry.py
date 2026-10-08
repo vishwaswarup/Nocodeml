@@ -23,7 +23,9 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
-from nocodeml_engine.config import ModelConfig, TaskType
+from nocodeml_engine.config import (
+    SEARCH_MAX_CANDIDATES, SEARCH_MAX_FITS, SEARCH_MAX_PARAMS, SEARCH_MAX_VALUES, ModelConfig, SearchConfig, TaskType,
+)
 
 MAX_MODELS = 5
 
@@ -68,6 +70,9 @@ class ModelSpec:
     recommend: Callable[[int, int], dict[str, Any]] = field(
         default=lambda n_rows, n_features: {}
     )
+    # estimator parameters that can be searched but are not plain hyperparameters (e.g. the penalty strength C,
+    # which the Regularization section sets for these models)
+    extra_tunable: tuple["HyperParam", ...] = ()
 
     @property
     def tasks(self) -> list[TaskType]:
@@ -199,6 +204,7 @@ _register(ModelSpec(
         note="Strength is controlled by C (smaller C = stronger regularization).")},
     cost="low", interpretability="high",
     recommend=lambda n, f: {"max_iter": 1000},
+    extra_tunable=(HyperParam("C", "float", 1.0, min=1e-4, max=1e3, description="Inverse regularization strength."),),
 ))
 _register(ModelSpec(
     key="knn", name="K-Nearest Neighbors",
@@ -291,6 +297,7 @@ _register(ModelSpec(
         note="Strength is controlled by C (smaller C = stronger regularization).")},
     cost="high", interpretability="low",
     recommend=lambda n, f: {"kernel": "rbf"},
+    extra_tunable=(HyperParam("C", "float", 1.0, min=1e-4, max=1e3, description="Inverse regularization strength."),),
 ))
 _register(ModelSpec(
     key="linear_regression", name="Linear Regression",
@@ -359,6 +366,86 @@ def _validate_value(hp: HyperParam, value: Any, model: str) -> None:
             raise bad(f"must be within [{hp.min}, {hp.max}]")
 
 
+def tunable_params(spec: ModelSpec) -> dict[str, HyperParam]:
+    """Everything a search may vary for this model."""
+    return {hp.name: hp for hp in (*spec.hyperparameters, *spec.extra_tunable)}
+
+
+_SUGGESTED: dict[str, list[Any]] = {
+    "max_depth": [3, 5, 8, 12], "n_estimators": [50, 100, 200, 400], "learning_rate": [0.01, 0.05, 0.1, 0.2],
+    "min_samples_leaf": [1, 2, 5, 10], "min_samples_split": [2, 5, 10, 20], "subsample": [0.6, 0.8, 1.0],
+    "colsample_bytree": [0.6, 0.8, 1.0], "reg_lambda": [0.1, 1.0, 5.0, 10.0], "reg_alpha": [0.0, 0.1, 1.0],
+    "min_child_weight": [1.0, 3.0, 5.0], "C": [0.01, 0.1, 1.0, 10.0, 100.0], "alpha": [0.01, 0.1, 1.0, 10.0, 100.0],
+    "n_neighbors": [3, 5, 11, 21],
+}
+
+
+def suggested_values(hp: HyperParam) -> list[Any]:
+    """A sensible starting list of values to try for one hyperparameter (only values the model accepts)."""
+    if hp.kind == "bool":
+        return [True, False]
+    if hp.kind == "choice":
+        return [c for c in hp.choices if c is not None]
+    vals = _SUGGESTED.get(hp.name)
+    if vals is None and hp.default is not None and isinstance(hp.default, (int, float)):
+        d = hp.default
+        vals = [d / 2, d, d * 2] if hp.kind == "float" else sorted({max(1, int(d) // 2), int(d), int(d) * 2})
+    return [v for v in (vals or [])
+            if (hp.min is None or v >= hp.min) and (hp.max is None or v <= hp.max)]
+
+
+def search_size(search: SearchConfig) -> int:
+    """How many settings will be tried."""
+    if search.method == "grid":
+        n = 1
+        for values in search.space.values():
+            n *= max(1, len(values))
+        return n
+    return search.n_iter
+
+
+def validate_search(cfg: ModelConfig, spec: ModelSpec) -> None:
+    sr = cfg.search
+    if sr is None:
+        return
+
+    def bad(msg: str) -> ModelConfigError:
+        return ModelConfigError(f"{spec.name} search: {msg}")
+
+    tunable = tunable_params(spec)
+    if not sr.space:
+        raise bad("choose at least one hyperparameter to tune.")
+    if len(sr.space) > SEARCH_MAX_PARAMS:
+        raise bad(f"at most {SEARCH_MAX_PARAMS} hyperparameters can be tuned at once.")
+    if not 2 <= sr.cv_folds <= 5:
+        raise bad("cv_folds must be between 2 and 5.")
+    for name, values in sr.space.items():
+        if name not in tunable:
+            raise bad(f"'{name}' can't be tuned for this model. Options: {sorted(tunable)}.")
+        if not isinstance(values, list) or not 1 <= len(values) <= SEARCH_MAX_VALUES:
+            raise bad(f"'{name}' needs between 1 and {SEARCH_MAX_VALUES} values to try.")
+        if len({repr(v) for v in values}) != len(values):
+            raise bad(f"'{name}' lists the same value twice.")
+        for v in values:
+            _validate_value(tunable[name], v, spec.key)
+    if "C" in sr.space and cfg.regularization.get("type") == "none":
+        raise bad("C can't be tuned while the penalty is 'none' (there is no penalty to strengthen).")
+    if sr.method == "random" and not 2 <= sr.n_iter <= SEARCH_MAX_CANDIDATES:
+        raise bad(f"n_iter must be between 2 and {SEARCH_MAX_CANDIDATES}.")
+    total = search_size(sr)
+    if sr.method == "grid" and total > SEARCH_MAX_CANDIDATES:
+        raise bad(f"this grid has {total} combinations; the limit is {SEARCH_MAX_CANDIDATES}. "
+                  "Use fewer values, or switch to random search.")
+    if sr.method == "random":
+        combos = 1
+        for values in sr.space.values():
+            combos *= len(values)
+        if sr.n_iter > combos:
+            raise bad(f"only {combos} combinations exist, so n_iter can't be {sr.n_iter}.")
+    if total * sr.cv_folds > SEARCH_MAX_FITS:
+        raise bad(f"{total} settings x {sr.cv_folds} folds = {total * sr.cv_folds} fits; the limit is {SEARCH_MAX_FITS}.")
+
+
 def validate_model_config(cfg: ModelConfig, task: TaskType) -> None:
     spec = get_spec(cfg.model_key)
     if task not in spec.estimators:
@@ -381,6 +468,7 @@ def validate_model_config(cfg: ModelConfig, task: TaskType) -> None:
         if rtype not in reg_spec.options:
             raise ModelConfigError(
                 f"{spec.name} supports regularization {list(reg_spec.options)}, got '{rtype}'.")
+    validate_search(cfg, spec)
 
 
 def recommended_hyperparameters(model_key: str, n_rows: int, n_features: int) -> dict[str, Any]:

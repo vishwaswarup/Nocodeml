@@ -36,6 +36,7 @@ from nocodeml_engine.artifacts import export_artifacts
 from nocodeml_engine.config import PipelineConfig
 from nocodeml_engine.feature_engineering import FeatureEngineeringError
 from nocodeml_engine.models import MODEL_REGISTRY, ModelConfigError
+from nocodeml_engine.models.registry import suggested_values, tunable_params
 from nocodeml_engine.persistence import ProjectService, StorageError
 from nocodeml_engine.persistence.projects import MAX_DATASET_BYTES
 from nocodeml_engine.models import get_spec
@@ -361,6 +362,10 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
                          "choices": list(h.choices), "min": h.min, "max": h.max,
                          "advanced": h.advanced, "description": h.description}
                         for h in s.hyperparameters],
+                    "tunable": [
+                        {"name": h.name, "kind": h.kind, "default": h.default, "choices": list(h.choices),
+                         "min": h.min, "max": h.max, "description": h.description, "suggested": suggested_values(h)}
+                        for h in tunable_params(s).values() if h.name != "max_iter"],
                     "regularization": {"kind": reg.kind, "options": list(reg.options),
                                        "complexity_params": list(reg.complexity_params),
                                        "note": reg.note}})

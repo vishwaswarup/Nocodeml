@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 from pydantic import BaseModel
 
-from nocodeml_engine.dataset.loader import infer_datetimes
+from nocodeml_engine.dataset.loader import SUPPORTED_FORMATS, DatasetFormatError, dataset_format, parse_dataset
 from nocodeml_engine.persistence.repository import SupabasePipelineRepository
 from nocodeml_engine.profiling import profile_dataset
 from nocodeml_engine.state import PipelineService, VersionStatus
@@ -151,17 +151,19 @@ class ProjectService:
 
     def add_dataset(self, project_id: str, filename: str, data: bytes,
                     target: str | None = None, dataset_id: str | None = None) -> DatasetRecord:
-        """Validate, profile, upload and register a CSV. Pass dataset_id to add a new version."""
-        if not filename.lower().endswith(".csv"):
-            raise StorageError("Only .csv files are supported in this version.")
+        """Validate, profile, upload and register a CSV, Excel (.xlsx) or Parquet file. Pass dataset_id to add a version."""
+        try:
+            ext = dataset_format(filename)
+        except DatasetFormatError as e:
+            raise StorageError(str(e)) from e
         if len(data) > MAX_DATASET_BYTES:
             raise StorageError(f"Dataset exceeds the {MAX_DATASET_BYTES // 2**20} MB limit.")
         try:
-            df = infer_datetimes(pd.read_csv(io.BytesIO(data)))
-        except Exception as e:  # malformed upload: surface a clean error, store nothing
-            raise StorageError(f"Could not parse CSV: {e}") from e
+            df = parse_dataset(data, filename)
+        except DatasetFormatError as e:  # malformed upload: surface a clean error, store nothing
+            raise StorageError(str(e)) from e
         if df.empty:
-            raise StorageError("The CSV contains no rows.")
+            raise StorageError("The file contains no rows.")
 
         if dataset_id is None:
             dataset_id = self.db.table("datasets").insert(
@@ -176,7 +178,7 @@ class ProjectService:
         path = f"{self.user_id}/{project_id}/{dataset_id}/v{version}/{safe_filename(filename)}"
         profile = json.loads(json.dumps(profile_dataset(df, target).to_dict(), default=str))
         try:
-            self.db.storage.from_("datasets").upload(path, data, {"content-type": "text/csv"})
+            self.db.storage.from_("datasets").upload(path, data, {"content-type": SUPPORTED_FORMATS[ext]})
         except Exception as e:
             raise StorageError(f"Upload failed: {e}") from e
         try:
@@ -201,8 +203,10 @@ class ProjectService:
         if not rows:
             raise StorageError("Dataset version not found")
         r = rows[0]
-        df = infer_datetimes(pd.read_csv(io.BytesIO(
-            self.db.storage.from_("datasets").download(r["storage_path"]))))
+        try:
+            df = parse_dataset(self.db.storage.from_("datasets").download(r["storage_path"]), r["filename"])
+        except DatasetFormatError as e:
+            raise StorageError(str(e)) from e
         if dataset_fingerprint(df) != r["fingerprint"]:
             raise StorageError("Dataset content does not match its recorded fingerprint.")
         return df

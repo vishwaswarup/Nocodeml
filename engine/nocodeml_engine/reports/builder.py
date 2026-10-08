@@ -471,10 +471,41 @@ def s_hyper(c: ReportContext, n: int) -> list[Flowable]:
             reg_text = "None: this model has no regularization."
         source = ("NoCodeML recommended starting values" if mc and mc.use_recommended_defaults else "library defaults") + (
             ", with manual overrides" if mc and mc.hyperparameters else "")
+        if m.search:
+            source = "chosen by hyperparameter search (below)"
         out.append(KeepTogether([
             P(m.name, "h2"), P(f"Regularization: {reg_text}"), P(f"Values: {source}", "small"),
             table([["Parameter", "Value"]] + [[k, "none" if v is None else v] for k, v in m.hyperparameters.items()], [60 * mm, 60 * mm]),
         ]))
+        if m.search:
+            out += _search_block(m)
+    return out
+
+
+def _fmt_params(params: dict[str, Any]) -> str:
+    return ", ".join(f"{k} = {'none' if v is None else (f'{v:.4g}' if isinstance(v, float) else v)}" for k, v in params.items())
+
+
+def _search_block(m: ModelResult) -> list[Flowable]:
+    sr = m.search or {}
+    metric = {"f1": "F1", "f1_weighted": "weighted F1", "r2": "R²"}.get(sr.get("scoring"), sr.get("scoring"))
+    method = "Grid search (every combination)" if sr.get("method") == "grid" else "Random search"
+    tried = "; ".join(f"{k}: {', '.join(str(v) for v in vs)}" for k, vs in (sr.get("searched") or {}).items())
+    rows = [["Rank", "Settings tried", f"Mean {metric}", "Spread (±)"]]
+    for cand in sr.get("candidates", [])[:10]:
+        rows.append([cand["rank"], _fmt_params(cand["params"]), f3(cand["mean_score"]), f3(cand["std_score"])])
+    out: list[Flowable] = [
+        P(f"Hyperparameter search for {m.name}", "h2"),
+        P(f"{method}: {sr.get('n_candidates')} settings, each scored by {sr.get('cv_folds')}-fold cross-validation on the training rows only, "
+          f"using {metric}. Values searched: {tried}.", "small"),
+        table(rows, [14 * mm, CONTENT_W - 14 * mm - 44 * mm, 24 * mm, 20 * mm], right=(2, 3)),
+        P(f"Chosen: {_fmt_params(sr.get('best_params', {}))} (mean {metric} {f3(sr.get('best_score'))} across the inner folds). "
+          "This score guided the choice and is not the model's final score: that comes from the evaluation sections.", "small"),
+    ]
+    if sr.get("edge_params"):
+        out.append(P("The best value of " + ", ".join(sr["edge_params"]) + " is at the edge of the range that was tried, "
+                     "so a wider range might do better.", "small"))
+    out.append(Spacer(1, 4))
     return out
 
 

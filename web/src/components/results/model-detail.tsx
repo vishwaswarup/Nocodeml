@@ -3,7 +3,7 @@ import { HistogramChart } from "@/components/charts/histogram-chart";
 import { RocChart } from "@/components/charts/roc-chart";
 import { ScatterChart } from "@/components/charts/scatter-chart";
 import { Metric } from "@/components/ui/data";
-import type { ModelResult, Task } from "@/lib/types";
+import type { ModelResult, SearchSummary, Task } from "@/lib/types";
 import { f3, num, type Source } from "./metrics";
 
 function Hyper({ params }: { params: Record<string, unknown> }) {
@@ -16,6 +16,52 @@ function Hyper({ params }: { params: Record<string, unknown> }) {
         </span>
       ))}
     </div>
+  );
+}
+
+const fmt = (v: unknown) => (v === null ? "none" : typeof v === "number" && !Number.isInteger(v) ? String(Number(v.toPrecision(4))) : String(v));
+
+/** What the automatic search tried, and what it chose. Sits above the final scores, which come from untouched data. */
+function SearchCard({ search }: { search: SearchSummary }) {
+  const metric = search.scoring === "r2" ? "R²" : search.scoring === "f1_weighted" ? "weighted F1" : "F1";
+  return (
+    <section aria-label="Hyperparameter search" className="rounded-card bg-surface p-5 ring-1 ring-line">
+      <p className="text-[16px]">Automatic search</p>
+      <p className="mt-1 text-[13px] text-fg-muted">
+        {search.method === "grid" ? "Grid search" : "Random search"}: tried {search.n_candidates} settings, each scored by {search.cv_folds}-fold
+        cross-validation on the training rows only ({metric}). The winner is highlighted. These scores guided the choice; the model&apos;s
+        real score is the one above, from data the search never saw.
+      </p>
+      {search.edge_params.length > 0 && (
+        <p className="mt-2 text-[13px] text-warn">
+          The best value of {search.edge_params.join(", ")} was at the edge of the range tried, so a wider range might do better.
+        </p>
+      )}
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full border-collapse text-[13px]">
+          <caption className="sr-only">Settings tried by the hyperparameter search, best first</caption>
+          <thead>
+            <tr className="border-b border-line text-left text-fg-muted">
+              <th scope="col" className="py-2 pr-3 font-normal">Rank</th>
+              <th scope="col" className="py-2 pr-3 font-normal">Settings</th>
+              <th scope="col" className="py-2 pr-3 text-right font-normal">Mean {metric}</th>
+              <th scope="col" className="py-2 text-right font-normal">Spread (±)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {search.candidates.slice(0, 10).map((c) => (
+              <tr key={c.rank + JSON.stringify(c.params)} className={c.rank === 1 ? "bg-pass/[0.07]" : "border-t border-line"}>
+                <td className="py-2 pr-3 font-mono tabular">{c.rank}{c.rank === 1 && <span className="ml-1.5 text-pass">chosen</span>}</td>
+                <td className="py-2 pr-3 font-mono text-[12px]">{Object.entries(c.params).map(([k, v]) => `${k} ${fmt(v)}`).join(" · ")}</td>
+                <td className="py-2 pr-3 text-right font-mono tabular">{c.mean_score.toFixed(3)}</td>
+                <td className="py-2 text-right font-mono tabular text-fg-muted">{c.std_score.toFixed(3)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {search.candidates.length > 10 && <p className="mt-2 text-[12px] text-fg-subtle">Showing the best 10 of {search.n_candidates}.</p>}
+    </section>
   );
 }
 
@@ -70,6 +116,8 @@ export function ModelDetail({ model, task, source }: { model: ModelResult; task:
         )}
         <p>Trained in <span className="font-mono text-fg tabular">{model.fit_seconds}s</span>{model.n_outlier_rows_removed > 0 && ` · ${model.n_outlier_rows_removed} outlier rows removed from training`}</p>
       </div>
+
+      {model.search && <SearchCard search={model.search} />}
 
       {task === "classification" ? (
         <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">

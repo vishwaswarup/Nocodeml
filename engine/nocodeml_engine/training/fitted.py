@@ -20,7 +20,7 @@ class FittedPipeline:
 
     def __init__(self, pipeline: Pipeline, task: TaskType, target: str, model_key: str,
                  input_columns: list[str], label_encoder: LabelEncoder | None,
-                 n_rows_fitted: int, n_outlier_rows_removed: int):
+                 n_rows_fitted: int, n_outlier_rows_removed: int, search: dict[str, Any] | None = None):
         self.pipeline = pipeline
         self.task = task
         self.target = target
@@ -29,6 +29,7 @@ class FittedPipeline:
         self.label_encoder = label_encoder
         self.n_rows_fitted = n_rows_fitted
         self.n_outlier_rows_removed = n_outlier_rows_removed
+        self.search = search     # summary of the hyperparameter search that chose this model's settings, if any
 
     @property
     def model(self):
@@ -76,7 +77,7 @@ class FittedPipeline:
 
 
 def fit_pipeline(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, model_cfg: ModelConfig,
-                 classes: list | None = None) -> FittedPipeline:
+                 classes: list | None = None, deadline: float | None = None) -> FittedPipeline:
     """Fit FE + preprocessing + model on (X, y). Call with TRAIN rows only."""
     task = config.dataset.task
     rs = config.split.random_state
@@ -97,9 +98,15 @@ def fit_pipeline(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, model_cf
     est = build_estimator(model_cfg, task, len(X_raw), n_features, rs)
     pipe = Pipeline([("fe", FeatureEngineer(config.feature_engineering)),
                      ("preprocess", preprocessor), ("model", est)])
-    pipe.fit(X_raw, y_f)
+    summary = None
+    if model_cfg.search is not None:
+        from nocodeml_engine.training.search import run_search
+        pipe, summary = run_search(pipe, X_raw, y_f, model_cfg, config,
+                                   len(le.classes_) if le is not None else None, deadline)
+    else:
+        pipe.fit(X_raw, y_f)
     return FittedPipeline(pipe, task, config.dataset.target_column, model_cfg.model_key,
-                          list(X.columns), le, len(X_raw), removed)
+                          list(X.columns), le, len(X_raw), removed, summary)
 
 
 def resolved_params(fp: FittedPipeline) -> dict[str, Any]:

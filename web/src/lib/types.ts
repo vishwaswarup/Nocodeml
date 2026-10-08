@@ -149,14 +149,25 @@ export type HyperParamInfo = {
   name: string; kind: "int" | "float" | "choice" | "bool" | "optional_int"; default: unknown;
   choices: unknown[]; min: number | null; max: number | null; advanced: boolean; description: string;
 };
+export type TunableInfo = {
+  name: string; kind: HyperParamInfo["kind"]; default: unknown; choices: unknown[]; min: number | null; max: number | null;
+  description: string; suggested: unknown[];
+};
+export type SearchConfig = { method: "grid" | "random"; space: Record<string, unknown[]>; n_iter: number; cv_folds: number };
+export type SearchSummary = {
+  method: "grid" | "random"; cv_folds: number; scoring: string; n_candidates: number; seconds: number;
+  searched: Record<string, unknown[]>; best_params: Record<string, unknown>; best_score: number; edge_params: string[];
+  candidates: { params: Record<string, unknown>; mean_score: number; std_score: number; rank: number }[];
+};
 export type RegInfo = { kind: "penalty" | "complexity" | "none"; options: string[]; complexity_params: string[]; note: string };
 export type ModelInfo = {
   key: string; name: string; task: Task; requires_scaling: boolean; cost: "low" | "medium" | "high";
   interpretability: "low" | "medium" | "high"; hyperparameters: HyperParamInfo[]; regularization: RegInfo;
+  tunable: TunableInfo[];
 };
 export type ModelConfig = {
   model_key: string; regularization: Record<string, unknown>; hyperparameters: Record<string, unknown>;
-  use_recommended_defaults: boolean;
+  use_recommended_defaults: boolean; search?: SearchConfig | null;
 };
 export type ModelDefaults = Record<string, { recommended: Record<string, unknown>; defaults: Record<string, unknown>; n_rows: number; n_features: number }>;
 
@@ -178,6 +189,7 @@ export type ModelResult = {
   model_key: string; name: string; hyperparameters: Record<string, unknown>;
   metrics: Record<string, Metrics>; fold_primary_scores: number[]; primary_metric: string;
   baseline: Record<string, number | null>; n_rows_fitted: number; n_outlier_rows_removed: number; fit_seconds: number;
+  search?: SearchSummary | null;
 };
 export type QualityCheck = { id: string; status: "pass" | "warn" | "fail" | "na"; title: string; detail: string; model_key: string | null };
 export type ExperimentResult = {

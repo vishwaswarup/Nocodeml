@@ -13,6 +13,7 @@ import { pipelineBody } from "@/lib/pipeline";
 import { useModelIssues } from "@/lib/use-model-issues";
 import type { Job, ModelConfig, ModelDefaults, ModelInfo, PipelineConfig, PipelineSaved, ProjectState } from "@/lib/types";
 import { ParamField } from "./param-field";
+import { TunePanel } from "./tune-panel";
 
 type Validation = { valid: boolean; issues: string[] };
 
@@ -240,6 +241,7 @@ function HyperCard({ info, model, defaults, problems, onChange }: {
   const touched = params.some((p) => p.name in model.hyperparameters);
   const value = (name: string, dflt: unknown) =>
     name in model.hyperparameters ? model.hyperparameters[name] : model.use_recommended_defaults && name in rec ? rec[name] : dflt;
+  const tuned = (name: string) => !!model.search && name in model.search.space;
   const fromRec = (name: string) => !(name in model.hyperparameters) && model.use_recommended_defaults && name in rec;
   const set = (name: string, v: unknown) => onChange((m) => ({ ...m, hyperparameters: { ...m.hyperparameters, [name]: v } }));
   const resetParams = () => onChange((m) => ({
@@ -278,7 +280,7 @@ function HyperCard({ info, model, defaults, problems, onChange }: {
       {main.length > 0 && (
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           {main.map((p) => <ParamField key={p.name} hp={p} value={value(p.name, p.default)} onChange={(v) => set(p.name, v)}
-            note={fromRec(p.name) ? "(recommended)" : undefined} />)}
+            disabled={tuned(p.name)} note={tuned(p.name) ? "(chosen by the search)" : fromRec(p.name) ? "(recommended)" : undefined} />)}
         </div>
       )}
 
@@ -291,11 +293,13 @@ function HyperCard({ info, model, defaults, problems, onChange }: {
           {advanced && (
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
               {adv.map((p) => <ParamField key={p.name} hp={p} value={value(p.name, p.default)} onChange={(v) => set(p.name, v)}
-                note={fromRec(p.name) ? "(recommended)" : undefined} />)}
+                disabled={tuned(p.name)} note={tuned(p.name) ? "(chosen by the search)" : fromRec(p.name) ? "(recommended)" : undefined} />)}
             </div>
           )}
         </div>
       )}
+
+      <TunePanel info={info} model={model} onChange={onChange} />
 
       {touched && <Button variant="ghost" size="sm" className="mt-3" onClick={resetParams}>Reset to {model.use_recommended_defaults ? "recommended" : "defaults"}</Button>}
       {problems.length > 0 && (

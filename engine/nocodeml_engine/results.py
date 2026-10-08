@@ -35,6 +35,9 @@ class ModelResult(BaseModel):
     n_rows_fitted: int = 0
     n_outlier_rows_removed: int = 0
     fit_seconds: float = 0.0
+    # Hyperparameter search that chose this model's settings (None if it was trained once as configured).
+    # In cross-validation the search is repeated inside every outer fold; this is the search on all of the data.
+    search: dict[str, Any] | None = None
 
 
 class ExperimentResult(BaseModel):

@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-07._
 
-## Done (all verified: 114 backend tests, 245 browser checks)
+## Done (all verified: 151 backend tests, 245 browser checks)
 - Core ML engine, versioned pipelines, experiments, finalize, compare (Phases 1-2)
 - Supabase: schema + row-level security + private storage, Google + email login (Phase 3)
 - FastAPI: auth, datasets, pipeline, background training, results, downloads (Phase 4)
@@ -25,8 +25,10 @@ _Last updated 2026-10-07._
    (apply `supabase/migrations/0002_hardening.sql`, publish Google app, Supabase URL config, backups, monitoring).
 
 ## Backlog (not started)
-- XGBoost (and LightGBM/CatBoost later)
-- Hyperparameter search (GridSearchCV / RandomizedSearchCV, later Optuna)
+- ~~XGBoost~~ DONE 2026-10-08 (also Gradient Boosting now supports classification). LightGBM/CatBoost later.
+  macOS needs `brew install libomp` for XGBoost; without it the model is simply not offered.
+- ~~Hyperparameter search~~ DONE 2026-10-08 (grid + random, nested inside training rows only; UI in Training, results card, PDF).
+  Possible follow-ups: Optuna/Bayesian search, successive halving, tuning shown in Regularization section too, search progress bar.
 - More feature engineering: polynomial, binning, power transforms, elapsed-time dates
 - Clustering workflow (K-Means, DBSCAN, Agglomerative)
 - Model deployment / generated prediction API

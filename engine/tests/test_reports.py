@@ -167,3 +167,17 @@ def test_regression_dataset_charts_and_a_broken_chart_is_skipped(housing_df):
     ctx.extras["dataset_charts"].append({"type": "unknown_kind", "title": "Mystery", "why": "x", "data": {}})
     _, text = read(b.build_report(ctx))
     assert "3. Dataset charts" in text and "Broken" not in text and "Mystery" not in text
+
+
+def test_report_documents_the_hyperparameter_search(churn_df, churn_config):
+    from nocodeml_engine.config import ModelConfig, SearchConfig
+    cfg = churn_config.model_copy(update={"models": [ModelConfig(
+        model_key="random_forest", search=SearchConfig(method="grid", space={"max_depth": [2, 4, 6], "n_estimators": [10, 20]}))]})
+    ctx, run = ctx_for(churn_df, cfg)
+    s = run.result.models[0].search
+    _, text = read(build_report(ctx))
+    text = " ".join(text.split())                                    # lines wrap anywhere in the PDF
+    assert "Hyperparameter search for Random Forest" in text and "Grid search" in text
+    assert "training rows only" in text and "chosen by hyperparameter search" in text
+    assert f"{s['best_score']:.3f}" in text and "max_depth = " in text
+    assert "not the model's final score" in text
