@@ -37,6 +37,7 @@ export default function PrivacyPage() {
           "Google: sign-in with Google.",
           "Our hosting providers for the website and the server that trains your models.",
         ]} />
+        <p>If you choose to train on Google Colab, you download your prepared data from NoCodeML and upload it to your own Colab session, which Google runs under your Google account and its own terms. Only the predictions you upload back are stored with the experiment.</p>
         <p>We may also disclose information if the law requires it.</p>
       </LegalSection>
 

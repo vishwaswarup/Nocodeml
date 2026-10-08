@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
 import uuid
 from pathlib import Path
@@ -20,7 +21,18 @@ from nocodeml_engine.state import PipelineService, VersionStatus
 from nocodeml_engine.state.store import Experiment, PipelineVersion
 from nocodeml_engine.training.runner import dataset_fingerprint
 
-MAX_DATASET_BYTES = 100 * 1024 * 1024  # matches the `datasets` bucket limit (cloud training cap)
+# Upload size limit. The `datasets` bucket allows 100 MB; a small server (e.g. a free 512 MB host) should lower it with
+# NOCODEML_MAX_UPLOAD_MB, because training needs several times the file size in memory.
+def upload_limit_bytes(setting: str | None) -> int:
+    """The configured limit in bytes: 1 MB at least, and never above the 100 MB the bucket accepts."""
+    try:
+        mb = int(setting) if setting else 100
+    except ValueError:
+        mb = 100
+    return min(100, max(1, mb)) * 1024 * 1024
+
+
+MAX_DATASET_BYTES = upload_limit_bytes(os.environ.get("NOCODEML_MAX_UPLOAD_MB"))
 
 _ARTIFACT_KINDS = [  # (filename pattern, kind, bucket)
     (re.compile(r"^pipeline_.*\.pkl$"), "pipeline", "pipelines"),

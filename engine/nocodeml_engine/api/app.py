@@ -24,6 +24,7 @@ import httpx
 import pandas as pd
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import JSONResponse
 
@@ -50,6 +51,8 @@ from nocodeml_engine.profiling import profile_dataset
 from nocodeml_engine.splitting import SplitError
 from nocodeml_engine.state import PipelineError, VersionStatus
 from nocodeml_engine import visualization as viz
+from nocodeml_engine.colab.bundle import build_bundle
+from nocodeml_engine.colab.importer import ResultsError, import_results
 from nocodeml_engine.training import ConfigurationError, check_config, run_experiment
 
 log = logging.getLogger("nocodeml.api")
@@ -152,7 +155,7 @@ def _headline(model_result) -> dict:
 
 
 def create_app(client_factory: ClientFactory | None = None, cors_origins: list[str] | None = None,
-               max_workers: int = 2, client_builder: Callable[[str], object] | None = None,
+               max_workers: int | None = None, client_builder: Callable[[str], object] | None = None,
                limiter: RateLimiter | None = None, train_timeout: float | None = None,
                rate_limits: dict | None = None, production: bool | None = None,
                trust_proxy: bool | None = None) -> FastAPI:
@@ -162,14 +165,16 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         production = os.environ.get("NOCODEML_ENV", "").lower() == PRODUCTION_ENV
     if trust_proxy is None:
         trust_proxy = os.environ.get("NOCODEML_TRUST_PROXY", "").lower() in ("1", "true", "yes")
+    if max_workers is None:     # how many trainings run at once: lower it on small servers (each needs RAM)
+        max_workers = max(1, int(os.environ.get("NOCODEML_WORKERS", "2")))
     jobs = JobManager(max_workers=max_workers)
-    cache = DataFrameCache()
+    cache = DataFrameCache(size=max(1, int(os.environ.get("NOCODEML_DATASET_CACHE", "6"))))
     tokens = TokenCache()
     limiter = limiter or RateLimiter()
     limits = {"ip": IP_LIMIT, "user": USER_LIMIT, **HEAVY_LIMITS, **(rate_limits or {})}
     timeout = train_timeout if train_timeout is not None else float(
         os.environ.get("NOCODEML_TRAIN_TIMEOUT", TRAIN_TIMEOUT_SECONDS))
-    report_slots = threading.BoundedSemaphore(2)  # PDF rendering is CPU/memory heavy: at most 2 at once
+    report_slots = threading.BoundedSemaphore(max_workers)  # PDF rendering is CPU/memory heavy: bounded like training
 
     @asynccontextmanager
     async def lifespan(app):
@@ -250,7 +255,7 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             raise RuntimeError("In production NOCODEML_CORS_ORIGINS must list the web app's https:// origin(s) "
                                f"(got {origins or 'nothing'}); '*' and http:// origins are not allowed.")
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"],
-                       allow_headers=["Authorization", "Content-Type"])
+                       allow_headers=["Authorization", "Content-Type"], expose_headers=["Content-Disposition"])
 
     # ---- errors ----------------------------------------------------------
 
@@ -275,6 +280,10 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
     async def _pipeline(_: Request, e: PipelineError):
         msg = str(e)
         return err(404 if "not found" in msg.lower() else 409, msg)
+
+    @app.exception_handler(ResultsError)
+    async def _results(_: Request, e: ResultsError):
+        return err(422, str(e), e.issues)
 
     @app.exception_handler(PreprocessingError)
     async def _prep(_: Request, e: PreprocessingError):
@@ -645,6 +654,48 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
         except JobBusy as e:
             raise HTTPException(503, str(e)) from None
 
+    # ---- training on Google Colab ------------------------------------------------------------------
+
+    MAX_RESULTS_BYTES = max(1, int(os.environ.get("NOCODEML_MAX_RESULTS_MB", "50"))) * 2**20
+
+    @app.post("/projects/{project_id}/colab/bundle")
+    def colab_bundle(ctx=Depends(project_ctx), _rl=Depends(heavy("train"))):
+        """A zip with the prepared train/test files and the models to train, for the Colab notebook."""
+        svc, pid = ctx
+        pipes = svc.pipelines(pid)
+        cfg = pipes.latest(pid).config
+        if not cfg.models:
+            raise HTTPException(422, "Select at least one model before training.")
+        df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
+        problems = check_config(df, cfg)
+        if problems:
+            return err(422, "The pipeline can't be trained yet.", problems)
+        data, _manifest = build_bundle(df, cfg)
+        return Response(content=data, media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="nocodeml_bundle_v{cfg.version}.zip"'})
+
+    @app.post("/projects/{project_id}/colab/results", status_code=201)
+    async def colab_results(file: UploadFile = File(...), ctx=Depends(project_ctx), _rl=Depends(heavy("train"))):
+        """Turn the predictions a Colab run produced into a normal experiment. All scoring happens here."""
+        svc, pid = ctx
+        raw = await file.read(MAX_RESULTS_BYTES + 1)
+        if len(raw) > MAX_RESULTS_BYTES:
+            raise HTTPException(413, f"The results file is larger than {MAX_RESULTS_BYTES // 2**20} MB.")
+        try:
+            results = json.loads(raw)
+        except ValueError:
+            raise HTTPException(422, "That file isn't valid JSON. Upload the nocodeml_results.json the notebook produced.") from None
+        return await run_in_threadpool(_record_colab_results, svc, pid, results)
+
+    def _record_colab_results(svc: ProjectService, pid: str, results):
+        pipes = svc.pipelines(pid)
+        latest = pipes.latest(pid)
+        cfg = latest.config
+        df = load_df(svc, cfg.dataset.dataset_id, cfg.dataset.version)
+        result = import_results(df, cfg, results)
+        exp = pipes.record_experiment(result)
+        return {"experiment_number": exp.number, "source": "colab"}
+
     @app.get("/projects/{project_id}/training/active")
     def active_training(ctx=Depends(project_ctx)):
         svc, pid = ctx
@@ -685,7 +736,7 @@ def create_app(client_factory: ClientFactory | None = None, cors_origins: list[s
             number=e.number, experiment_id=e.result.experiment_id,
             pipeline_version=e.pipeline_version, parent_number=e.parent_number,
             current=e.number in current, finished_at=e.result.finished_at,
-            quality_score=e.result.quality.score,
+            quality_score=e.result.quality.score, source=e.result.source,
             models=[_headline(m) for m in e.result.models])
             for e in pipes.repo.list_experiments(pid)]
 

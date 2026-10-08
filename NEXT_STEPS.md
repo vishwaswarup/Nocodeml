@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-07._
 
-## Done (all verified: 163 backend tests, 245 browser checks)
+## Done (all verified: 195 backend tests, 245 browser checks)
 - Core ML engine, versioned pipelines, experiments, finalize, compare (Phases 1-2)
 - Supabase: schema + row-level security + private storage, Google + email login (Phase 3)
 - FastAPI: auth, datasets, pipeline, background training, results, downloads (Phase 4)
@@ -18,7 +18,12 @@ _Last updated 2026-10-07._
    would need a master key or the user's refresh token (the API only holds each user's short-lived token), and a single
    API process is enough for a private beta. Revisit (Redis + dedicated workers) if/when training load outgrows one box.
 2. ~~Dataset charts in the PDF report~~ DONE 2026-10-07 (new section 3 "Dataset charts"; report is now 14 sections).
-3. **Local runner** (spec section 27/47): train on the user's own machine so data never leaves it.
+3. ~~Train on Google Colab~~ DONE 2026-10-08. Server prepares per-fold CSVs (preprocessing learned on training rows only) + manifest
+   (`POST /projects/{id}/colab/bundle`); a plain scikit-learn notebook (`web/public/nocodeml-colab.ipynb`, generated from
+   `engine/nocodeml_engine/colab/colab_runner.py`: regenerate with `python -m nocodeml_engine.colab.notebook ../web/public/nocodeml-colab.ipynb`)
+   trains and writes predictions only; `POST /projects/{id}/colab/results` scores everything server-side (same `assemble_metrics` as
+   server training) and records an experiment with `source: "colab"`. The "Open in Colab" link needs the GitHub repo to be PUBLIC.
+   Known differences: no raw-row exportable pipeline for Colab runs; tuning in Colab sees preprocessed data (flagged by a quality warning).
 4. ~~Pre-launch hardening~~ code side DONE 2026-10-07. What remains is dashboard clicks: see **DEPLOY.md**
    (apply `supabase/migrations/0002_hardening.sql`, publish Google app, Supabase URL config, backups, monitoring).
 

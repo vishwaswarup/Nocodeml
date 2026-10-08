@@ -43,6 +43,20 @@ It runs in production mode, as a non-root user, with one worker. Built and teste
 refuses to start without https CORS origins; hides /docs; XGBoost, hyperparameter search, Parquet and the PDF report
 all work inside it (image is about 1.9 GB, first build takes several minutes on a slow connection).
 
+### Running on a free host (Render free plan: 512 MB RAM, sleeps when idle)
+Measured inside a 512 MB container: the API alone needs ~260 MB; training 3 models on 5,000 rows peaks ~330 MB, on
+50,000 rows (14 MB CSV) ~440 MB, right at the limit. So on a free host set:
+```
+NOCODEML_MAX_UPLOAD_MB=10        # also set NEXT_PUBLIC_MAX_UPLOAD_MB=10 on the website so it refuses early
+NOCODEML_WORKERS=1               # one training at a time
+NOCODEML_DATASET_CACHE=1         # keep only one dataset in memory
+NOCODEML_TRAIN_TIMEOUT=300
+```
+A free server falls asleep after ~15 minutes without requests and needs up to a minute to wake: the website now waits
+for it (reads retry for about a minute). To keep it awake, add a free uptime monitor (UptimeRobot, every 5 minutes) on
+`https://YOUR-API/health`. Supabase's free plan also pauses a project after a week with no activity (one click to restore).
+Vercel's free "Hobby" plan is for personal, non-commercial use.
+
 ## 3. Web app environment
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_API_URL=https://api.yourdomain.com`
 

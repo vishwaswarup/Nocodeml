@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from typing import Any
 from datetime import datetime, timezone
 
 import numpy as np
@@ -128,63 +129,96 @@ def _baseline_metrics(task, y_true_raw: pd.Series, preds: np.ndarray, classes):
     return {"r2": m["r2"], "rmse": m["rmse"], "mae": m["mae"]}
 
 
+# One fold's predictions: split name ("train" | "validation" | "test") -> (row positions, predictions, scores or None)
+FoldPreds = dict[str, tuple[np.ndarray, np.ndarray, "np.ndarray | None"]]
+
+
+def assemble_metrics(task: TaskType, classes: list | None, le, plan: SplitPlan, y: pd.Series,
+                     fold_preds: list[FoldPreds]) -> tuple[dict[str, dict], list[float], dict]:
+    """Turn predictions into metrics, per-fold scores and the baseline. This is the ONE place that does so, used both
+    when the server trains a model itself and when predictions come back from a Colab run, so the two can't drift."""
+    pm = primary_metric(task)
+
+    def ev(idx, pred, score) -> dict:
+        yy = y.iloc[idx]
+        if task is TaskType.CLASSIFICATION:
+            return evaluate(task, le.transform(yy), pred, score, classes)
+        return evaluate(task, yy.astype(float).to_numpy(), pred)
+
+    metrics: dict[str, dict] = {}
+    fold_scores: list[float] = []
+    if plan.mode == "holdout":
+        f, sp = plan.folds[0], fold_preds[0]
+        metrics["train"] = ev(*sp["train"])
+        if "validation" in sp:
+            metrics["validation"] = ev(*sp["validation"])
+        metrics["test"] = ev(*sp["test"])
+        yte, ytr = y.iloc[f.test], y.iloc[f.train]
+        return metrics, fold_scores, _baseline_metrics(task, yte, _baseline_pred(task, ytr, len(yte), classes), classes)
+
+    oof_idx, oof_pred, oof_score, base_pred, train_primary = [], [], [], [], []
+    for f, sp in zip(plan.folds, fold_preds):
+        idx, pred, score = sp["test"]
+        fold_scores.append(ev(idx, pred, score)[pm])
+        train_primary.append(ev(*sp["train"])[pm])
+        oof_idx.append(idx)
+        oof_pred.append(pred)
+        oof_score.append(score)
+        base_pred.append(_baseline_pred(task, y.iloc[f.train], len(idx), classes))
+    ix = np.concatenate(oof_idx)
+    y_oof = y.iloc[ix]
+    pred = np.concatenate(oof_pred)
+    score = None if any(s is None for s in oof_score) else np.concatenate(oof_score)
+    if task is TaskType.CLASSIFICATION:
+        yt = np.array([classes.index(v) for v in y_oof])
+        metrics["cv"] = evaluate(task, yt, pred, score, classes)
+    else:
+        metrics["cv"] = evaluate(task, y_oof.astype(float).to_numpy(), pred)
+    metrics["cv"][f"{pm}_fold_mean"] = float(np.mean(fold_scores))
+    metrics["cv"][f"{pm}_fold_std"] = float(np.std(fold_scores))
+    metrics["train"] = {pm: float(np.mean(train_primary))}
+    return metrics, fold_scores, _baseline_metrics(task, y_oof, np.concatenate(base_pred), classes)
+
+
+def _predict_split(fp: FittedPipeline, X: pd.DataFrame, idx: np.ndarray):
+    rows = X.iloc[idx]
+    return idx, fp.predict_encoded(rows), fp.scores(rows)
+
+
 def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: float | None = None, cancel=None):
     task = config.dataset.task
     pm = primary_metric(task)
     spec = get_spec(model_cfg.model_key)
     t0 = time.perf_counter()
     fold_rows: list[tuple[int, int]] = []
-    metrics: dict[str, dict] = {}
-    fold_scores: list[float] = []
-    baseline: dict = {}
+    fold_preds: list[FoldPreds] = []
     outliers_removed = 0
+    le = None
 
     if plan.mode == "holdout":
         f = plan.folds[0]
         _check_deadline(deadline, cancel)
-        Xtr, ytr = X.iloc[f.train], y.iloc[f.train]
-        fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes, deadline, cancel)
+        fp = fit_pipeline(X.iloc[f.train], y.iloc[f.train], config, model_cfg, classes, deadline, cancel)
         fold_rows.append((fp.n_rows_fitted + fp.n_outlier_rows_removed, len(f.train)))
-        metrics["train"] = _eval(fp, Xtr, ytr)
+        sp: FoldPreds = {"train": _predict_split(fp, X, f.train)}
         if f.validation is not None:
-            metrics["validation"] = _eval(fp, X.iloc[f.validation], y.iloc[f.validation])
-        metrics["test"] = _eval(fp, X.iloc[f.test], y.iloc[f.test])
-        yte = y.iloc[f.test]
-        baseline = _baseline_metrics(task, yte, _baseline_pred(task, ytr, len(yte), classes), classes)
+            sp["validation"] = _predict_split(fp, X, f.validation)
+        sp["test"] = _predict_split(fp, X, f.test)
+        fold_preds.append(sp)
         outliers_removed = fp.n_outlier_rows_removed
+        le = fp.label_encoder
         final = fp
     else:
-        oof_idx, oof_true, oof_pred, oof_score, base_pred, train_primary = [], [], [], [], [], []
         for f in plan.folds:
             _check_deadline(deadline, cancel)
-            Xtr, ytr = X.iloc[f.train], y.iloc[f.train]
-            Xte, yte = X.iloc[f.test], y.iloc[f.test]
-            fp = fit_pipeline(Xtr, ytr, config, model_cfg, classes, deadline, cancel)
+            fp = fit_pipeline(X.iloc[f.train], y.iloc[f.train], config, model_cfg, classes, deadline, cancel)
             fold_rows.append((fp.n_rows_fitted + fp.n_outlier_rows_removed, len(f.train)))
-            m = _eval(fp, Xte, yte)
-            fold_scores.append(m[pm])
-            train_primary.append(_eval(fp, Xtr, ytr)[pm])
             outliers_removed += fp.n_outlier_rows_removed
-            oof_idx.append(f.test)
-            oof_pred.append(fp.predict_encoded(Xte))
-            sc = fp.scores(Xte)
-            oof_score.append(sc)
-            base_pred.append(_baseline_pred(task, ytr, len(yte), classes))
-        ix = np.concatenate(oof_idx)
-        y_oof = y.iloc[ix]
-        pred = np.concatenate(oof_pred)
-        score = None if any(s is None for s in oof_score) else np.concatenate(oof_score)
-        if task is TaskType.CLASSIFICATION:
-            yt = np.array([classes.index(v) for v in y_oof])
-            metrics["cv"] = evaluate(task, yt, pred, score, classes)
-        else:
-            metrics["cv"] = evaluate(task, y_oof.astype(float).to_numpy(), pred)
-        metrics["cv"][f"{pm}_fold_mean"] = float(np.mean(fold_scores))
-        metrics["cv"][f"{pm}_fold_std"] = float(np.std(fold_scores))
-        metrics["train"] = {pm: float(np.mean(train_primary))}
-        baseline = _baseline_metrics(task, y_oof, np.concatenate(base_pred), classes)
+            fold_preds.append({"train": _predict_split(fp, X, f.train), "test": _predict_split(fp, X, f.test)})
+            le = fp.label_encoder
         final = fit_pipeline(X, y, config, model_cfg, classes, deadline, cancel)  # exported model sees all data
 
+    metrics, fold_scores, baseline = assemble_metrics(task, classes, le, plan, y, fold_preds)
     result = ModelResult(
         model_key=model_cfg.model_key, name=spec.name, hyperparameters=resolved_params(final),
         metrics=metrics, fold_primary_scores=[float(s) for s in fold_scores], primary_metric=pm,
@@ -194,11 +228,18 @@ def _train_model(model_cfg, config, X, y, plan: SplitPlan, classes, deadline: fl
     return result, final, fold_rows
 
 
-def run_experiment(df: pd.DataFrame, config: PipelineConfig,
-                   experiment_id: str | None = None, deadline: float | None = None, cancel=None) -> ExperimentRun:
-    """`deadline` is an absolute time.monotonic() value and `cancel` a threading.Event; both are checked before each
-    model and fold (and between the settings of a hyperparameter search)."""
-    started = datetime.now(timezone.utc)
+@dataclass
+class RunSetup:
+    """The data and split exactly as training will see them (deterministic for a given dataset + config)."""
+    profile: Any
+    plog: Any
+    X: pd.DataFrame
+    y: pd.Series
+    classes: list | None
+    plan: SplitPlan
+
+
+def prepare_run(df: pd.DataFrame, config: PipelineConfig) -> RunSetup:
     _validate(df, config)
     target = config.dataset.target_column
     task = config.dataset.task
@@ -228,6 +269,17 @@ def run_experiment(df: pd.DataFrame, config: PipelineConfig,
         raise PreprocessingError(issues)
 
     plan = make_split_plan(X, y, config.split, task)
+    return RunSetup(profile, plog, X, y, classes, plan)
+
+
+def run_experiment(df: pd.DataFrame, config: PipelineConfig,
+                   experiment_id: str | None = None, deadline: float | None = None, cancel=None) -> ExperimentRun:
+    """`deadline` is an absolute time.monotonic() value and `cancel` a threading.Event; both are checked before each
+    model and fold (and between the settings of a hyperparameter search)."""
+    started = datetime.now(timezone.utc)
+    setup = prepare_run(df, config)
+    profile, plog, X, y, classes, plan = setup.profile, setup.plog, setup.X, setup.y, setup.classes, setup.plan
+    task = config.dataset.task
 
     results, pipelines, fitted_rows = [], {}, {}
     for m in config.models:

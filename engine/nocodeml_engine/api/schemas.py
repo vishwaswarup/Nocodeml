@@ -57,3 +57,4 @@ class ExperimentSummary(BaseModel):
     finished_at: str
     quality_score: float | None
     models: list[dict[str, Any]]  # key, name, headline metric
+    source: str = "server"  # "server" or "colab"

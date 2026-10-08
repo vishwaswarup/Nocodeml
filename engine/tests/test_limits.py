@@ -191,3 +191,19 @@ def test_cannot_delete_a_project_while_it_is_training(churn_df, churn_config, mo
         assert c.delete(f"/projects/{pid}", headers=A).status_code == 204
         assert c.get(f"/projects/{pid}", headers=A).status_code == 404
         assert c.delete(f"/projects/{pid}", headers=B).status_code == 404       # not anyone else's either
+
+
+def test_small_server_settings_come_from_the_environment(monkeypatch):
+    from nocodeml_engine.persistence.projects import upload_limit_bytes
+    mb = 1024 * 1024
+    assert upload_limit_bytes(None) == 100 * mb and upload_limit_bytes("") == 100 * mb
+    assert upload_limit_bytes("15") == 15 * mb
+    assert upload_limit_bytes("5000") == 100 * mb           # can lower the limit, never raise it past the bucket's 100 MB
+    assert upload_limit_bytes("0") == mb and upload_limit_bytes("-3") == mb
+    assert upload_limit_bytes("lots") == 100 * mb           # nonsense falls back to the default instead of crashing
+    monkeypatch.setenv("NOCODEML_WORKERS", "1")
+    with make() as c:
+        assert c.app.state.jobs._pool._max_workers == 1
+    monkeypatch.setenv("NOCODEML_WORKERS", "3")
+    with make() as c:
+        assert c.app.state.jobs._pool._max_workers == 3

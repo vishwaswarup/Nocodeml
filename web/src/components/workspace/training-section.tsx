@@ -14,6 +14,7 @@ import { pipelineBody } from "@/lib/pipeline";
 import { useModelIssues } from "@/lib/use-model-issues";
 import type { Job, ModelConfig, ModelDefaults, ModelInfo, PipelineConfig, PipelineSaved, ProjectState } from "@/lib/types";
 import { ParamField } from "./param-field";
+import { ColabCard } from "./colab-card";
 import { TunePanel } from "./tune-panel";
 
 type Validation = { valid: boolean; issues: string[] };
@@ -212,6 +213,9 @@ function Loaded({ projectId, cfg, goTo, onSaved }: {
               {busy ? "Training…" : dirty ? "Save and train" : `Train ${draft.length} model${draft.length === 1 ? "" : "s"}`}
             </Button>
           </Card>
+
+          <ColabCard projectId={projectId} ready={!!ready} disabled={busy || dirty}
+            onImported={(n) => { onSaved(`Colab results imported as Experiment #${n}.`); goTo(7); }} />
 
           {job && (
             <Card className="p-5" aria-live="polite">

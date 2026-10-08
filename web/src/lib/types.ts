@@ -199,10 +199,11 @@ export type ExperimentResult = {
   split: Record<string, unknown> & { mode: "holdout" | "cv"; method: string; n_folds: number; n_train: number; n_test: number };
   preparation_log: { step: string; rows_removed: number; detail: string }[];
   models: ModelResult[]; quality: { checks: QualityCheck[]; score: number | null };
+  source?: "server" | "colab";
 };
 export type ExperimentSummary = {
   number: number; experiment_id: string; pipeline_version: number; parent_number: number | null; current: boolean;
-  finished_at: string; quality_score: number | null; models: { model_key: string; name: string; metric: string; value: number | null }[];
+  finished_at: string; quality_score: number | null; source?: "server" | "colab"; models: { model_key: string; name: string; metric: string; value: number | null }[];
 };
 export type ExperimentDetail = {
   experiment: { number: number; pipeline_version: number; parent_number: number | null; result: ExperimentResult };

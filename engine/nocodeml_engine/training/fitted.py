@@ -76,9 +76,10 @@ class FittedPipeline:
         return None
 
 
-def fit_pipeline(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, model_cfg: ModelConfig,
-                 classes: list | None = None, deadline: float | None = None, cancel=None) -> FittedPipeline:
-    """Fit FE + preprocessing + model on (X, y). Call with TRAIN rows only."""
+def front_parts(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, classes: list | None = None):
+    """Everything before the model, learned from TRAINING rows only: the label encoder, the rows kept after outlier
+    removal (`X_raw`, `y_f`), and the unfitted preprocessor. Shared by `fit_pipeline` and the Colab bundle so both
+    prepare data in exactly the same way."""
     task = config.dataset.task
     rs = config.split.random_state
     le = None
@@ -87,14 +88,20 @@ def fit_pipeline(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, model_cf
         y_enc = pd.Series(le.transform(y), index=y.index)
     else:
         y_enc = y.astype(float)
-
     fe = FeatureEngineer(config.feature_engineering).fit(X)
     X_fe = fe.transform(X)
     X_fe_f, y_f, removed = OutlierRowFilter(config.preprocessing, rs).fit_filter(X_fe, y_enc)
     X_raw = X.loc[X_fe_f.index]
-
     preprocessor = build_preprocessor(X_fe_f, config.preprocessing, task)
-    n_features = X_fe_f.shape[1]
+    return le, preprocessor, X_raw, y_f, removed, X_fe_f.shape[1]
+
+
+def fit_pipeline(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, model_cfg: ModelConfig,
+                 classes: list | None = None, deadline: float | None = None, cancel=None) -> FittedPipeline:
+    """Fit FE + preprocessing + model on (X, y). Call with TRAIN rows only."""
+    task = config.dataset.task
+    rs = config.split.random_state
+    le, preprocessor, X_raw, y_f, removed, n_features = front_parts(X, y, config, classes)
     est = build_estimator(model_cfg, task, len(X_raw), n_features, rs)
     pipe = Pipeline([("fe", FeatureEngineer(config.feature_engineering)),
                      ("preprocess", preprocessor), ("model", est)])
@@ -109,11 +116,10 @@ def fit_pipeline(X: pd.DataFrame, y: pd.Series, config: PipelineConfig, model_cf
                           list(X.columns), le, len(X_raw), removed, summary)
 
 
-def resolved_params(fp: FittedPipeline) -> dict[str, Any]:
-    spec = get_spec(fp.model_key)
-    params = fp.model.get_params()
-    keep = {hp.name for hp in spec.hyperparameters} | {"C", "l1_ratio", "alpha", "solver",
-                                                         "max_depth", "random_state"}
+def resolve_params(model_key: str, params: dict[str, Any]) -> dict[str, Any]:
+    """The user-meaningful subset of an estimator's constructor settings, JSON-safe."""
+    spec = get_spec(model_key)
+    keep = {hp.name for hp in spec.hyperparameters} | {"C", "l1_ratio", "alpha", "solver", "max_depth", "random_state"}
     out = {}
     for k, v in params.items():
         if k in keep:
@@ -121,3 +127,7 @@ def resolved_params(fp: FittedPipeline) -> dict[str, Any]:
             if isinstance(v, float) and not np.isfinite(v):
                 out[k] = "inf"
     return out
+
+
+def resolved_params(fp: FittedPipeline) -> dict[str, Any]:
+    return resolve_params(fp.model_key, fp.model.get_params())

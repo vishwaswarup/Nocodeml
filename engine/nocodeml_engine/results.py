@@ -57,3 +57,4 @@ class ExperimentResult(BaseModel):
     preparation_log: list[dict[str, Any]]
     models: list[ModelResult]
     quality: QualityReport
+    source: str = "server"   # "server" (trained here) or "colab" (trained in Google Colab, scored here from its predictions)

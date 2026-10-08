@@ -109,7 +109,7 @@ function Loaded({ projectId, pipeline, goTo, onSaved }: {
         <h1 className="text-h1">Results</h1>
         <Select label="Experiment" value={String(number)} onChange={(e) => { setPicked(Number(e.target.value)); setModel(null); setConfirm(false); }} className="w-80 max-w-full">
           {newestFirst.map((e) => (
-            <option key={e.number} value={e.number}>#{e.number} · v{e.pipeline_version} · {e.current ? "current" : "outdated"} · {whenShort(e.finished_at)}</option>
+            <option key={e.number} value={e.number}>#{e.number} · v{e.pipeline_version} · {e.current ? "current" : "outdated"} · {whenShort(e.finished_at)}{e.source === "colab" ? " · Colab" : ""}</option>
           ))}
         </Select>
       </div>
@@ -194,6 +194,7 @@ function Loaded({ projectId, pipeline, goTo, onSaved }: {
               <dl className="mt-4 grid gap-x-8 gap-y-3 text-[13px] sm:grid-cols-2">
                 {[
                   ["Experiment", `#${exp.experiment.number} on pipeline v${exp.experiment.pipeline_version}`],
+                  ["Trained on", result.source === "colab" ? "Google Colab (every score here was computed by NoCodeML from the predictions it returned)" : "NoCodeML servers"],
                   ["Random seed", String(result.random_state)],
                   ["Dataset fingerprint", result.dataset_fingerprint],
                   ["Configuration hash", result.config_hash],

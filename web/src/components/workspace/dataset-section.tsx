@@ -13,7 +13,7 @@ import { bytes, fmt, int } from "@/lib/format";
 import type { DatasetInfo, DatasetProfile, PipelineSaved, ProjectState, Task } from "@/lib/types";
 import { DataViewer } from "./data-viewer";
 import { ExploreSection } from "./explore-section";
-import { DATASET_ACCEPT, DATASET_EXTENSIONS, Dropzone, MAX_UPLOAD } from "./dropzone";
+import { DATASET_ACCEPT, DATASET_EXTENSIONS, Dropzone, MAX_UPLOAD, MAX_UPLOAD_MB } from "./dropzone";
 
 const KIND_LABEL = { numerical: "num", categorical: "cat", datetime: "date" } as const;
 
@@ -32,7 +32,7 @@ export function DatasetSection({ projectId, state, onChanged }: {
       return setUploadError({ title: name.endsWith(".xls") ? "Old .xls workbooks aren't supported. Save it as .xlsx or .csv first."
         : "Only .csv, .xlsx and .parquet files are supported." });
     }
-    if (file.size > MAX_UPLOAD) return setUploadError({ title: `This file is ${bytes(file.size)}; the limit is 100 MB.` });
+    if (file.size > MAX_UPLOAD) return setUploadError({ title: `This file is ${bytes(file.size)}; the limit is ${MAX_UPLOAD_MB} MB.` });
     setUploadError(null);
     setUploading(true);
     const form = new FormData();
