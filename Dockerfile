@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# NoCodeML API. Build from the engine/ folder:  docker build -t nocodeml-api .
+# NoCodeML API. Build from the repository root:  docker build -t nocodeml-api .
 FROM python:3.12-slim
 
 # libgomp1: the OpenMP runtime XGBoost needs on Linux
@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml ./
-COPY nocodeml_engine ./nocodeml_engine
+COPY engine/pyproject.toml ./
+COPY engine/nocodeml_engine ./nocodeml_engine
 # Patient with slow networks, and the cache mount keeps downloaded wheels so a retry doesn't start from zero.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --retries 10 --timeout 120 ".[api]"

@@ -33,9 +33,9 @@ Run **one** API process for now: the rate-limit counters live in memory and trai
 "interrupted" and the user trains again.)
 
 ### Container (optional)
-`engine/Dockerfile` builds the API for any container host (Render, Railway, Fly, a VPS):
+`Dockerfile` (at the repository root) builds the API for any container host (Render, Railway, Fly, a VPS):
 ```
-cd engine && docker build -t nocodeml-api .
+docker build -t nocodeml-api .
 docker run --rm -p 8000:8000 -e SUPABASE_URL=... -e SUPABASE_ANON_KEY=... \
   -e NOCODEML_CORS_ORIGINS=https://app.yourdomain.com nocodeml-api
 ```

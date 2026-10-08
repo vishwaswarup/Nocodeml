@@ -1,11 +1,7 @@
-.venv
+# Only the API's own files go into the image.
+**
+!Dockerfile
+!engine/pyproject.toml
+!engine/nocodeml_engine/**
 **/__pycache__
-.pytest_cache
-*.egg-info
-tests
-test_files
-exports
-*.md
-demo*.py
-smoke_api.py
-get_token.py
+**/*.pyc
