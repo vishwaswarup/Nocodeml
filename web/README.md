@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NoCodeML website
 
-## Getting Started
+The Next.js app: landing page, sign-in, project list, and the eight-section workspace (dataset, preprocessing, features,
+split, models, regularization, training, results). It talks to the NoCodeML API ([`../engine`](../engine)) with the signed-in
+user's Supabase token and signs in with Supabase directly.
 
-First, run the development server:
+**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · `@supabase/supabase-js` · `motion` · custom SVG charts.
+
+> Next.js 16 differs from older versions. Before changing framework-level code, read the matching guide in
+> `node_modules/next/dist/docs/` (see `AGENTS.md`).
+
+## Run
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Create `web/.env.local` (git-ignored; these values are public by design):
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_MAX_UPLOAD_MB=100        # optional: lets the page refuse oversized files early (match the API's NOCODEML_MAX_UPLOAD_MB)
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Never put the Supabase `service_role` key here.
 
-## Learn More
+## Checks
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npx tsc --noEmit
+npm run lint
+npm run build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Layout
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+src/
+├── app/                routes: / (landing), /login, /auth/callback, /projects, /projects/[id], /privacy, /terms, /design
+├── components/
+│   ├── workspace/      the eight sections (+ Colab card, tuning panel)
+│   ├── results/        comparison table, per-model detail, health checks, artifacts
+│   ├── charts/         SVG charts, each with an accessible table twin
+│   └── ui/             design-system pieces (buttons, fields, cards, badges)
+└── lib/                API client (retries, wake-up notice), typed API shapes, pure helpers
+public/
+└── nocodeml-colab.ipynb   the Colab notebook; generated, see engine/nocodeml_engine/colab/notebook.py
+```
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Design notes: dark canvas, Geist + DM Mono, one signature ember → amber → sky gradient. A `/design` page shows the components.
+Accessibility is part of "done": keyboard use, labelled controls, text next to colour, and a table alternative for every chart.

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 from nocodeml_engine.persistence import SupabaseSettings, sign_in_with_password  # noqa: E402
 
 BASE = os.environ.get("API_URL", "http://127.0.0.1:8000")

@@ -73,7 +73,7 @@ print(impact.message)
 print("now on version", v2.version, "| results current for it:", len(svc.current_experiments("churn")))
 
 # 5. Export and predict on raw rows
-out = Path(__file__).parent / "exports" / "demo"
+out = Path(__file__).resolve().parents[1] / "exports" / "demo"
 paths = export_artifacts(run, config, out)
 print("\n=== EXPORTED FILES ===")
 for p in sorted(out.iterdir()):

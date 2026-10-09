@@ -10,7 +10,7 @@ from nocodeml_engine.dataset.loader import load_csv
 from nocodeml_engine.profiling import profile_dataset
 from nocodeml_engine.state import InMemoryRepository, PipelineService, Section
 
-here = Path(__file__).parent
+here = Path(__file__).resolve().parents[1]   # the engine/ folder
 df = load_csv(here / "test_files" / "employees.csv")
 profile = profile_dataset(df, target="Salary")
 print(f"Dataset: {profile.n_rows} rows x {profile.n_columns} cols | inferred task for Salary: "

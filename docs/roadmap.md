@@ -24,7 +24,7 @@ _Last updated 2026-10-07._
    trains and writes predictions only; `POST /projects/{id}/colab/results` scores everything server-side (same `assemble_metrics` as
    server training) and records an experiment with `source: "colab"`. The "Open in Colab" link needs the GitHub repo to be PUBLIC.
    Known differences: no raw-row exportable pipeline for Colab runs; tuning in Colab sees preprocessed data (flagged by a quality warning).
-4. ~~Pre-launch hardening~~ code side DONE 2026-10-07. What remains is dashboard clicks: see **DEPLOY.md**
+4. ~~Pre-launch hardening~~ code side DONE 2026-10-07. What remains is dashboard clicks: see **docs/deploy.md**
    (apply `supabase/migrations/0002_hardening.sql`, publish Google app, Supabase URL config, backups, monitoring).
 
 ## Backlog (not started)

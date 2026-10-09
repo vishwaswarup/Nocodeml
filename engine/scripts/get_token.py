@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 from nocodeml_engine.persistence import SupabaseSettings, sign_in_with_password  # noqa: E402
 
 w = (sys.argv[1] if len(sys.argv) > 1 else "A").upper()

@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN useradd --create-home --shell /usr/sbin/nologin app
 USER app
 
-# Production mode: no /docs, strict CORS (set NOCODEML_CORS_ORIGINS), HSTS. See DEPLOY.md for every setting.
+# Production mode: no /docs, strict CORS (set NOCODEML_CORS_ORIGINS), HSTS. See docs/deploy.md for every setting.
 ENV NOCODEML_ENV=production \
     PYTHONUNBUFFERED=1 \
     MPLCONFIGDIR=/tmp/matplotlib
