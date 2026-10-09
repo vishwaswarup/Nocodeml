@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { DM_Mono, Geist } from "next/font/google";
 import { AuthProvider } from "@/components/auth-provider";
 import { MotionProvider } from "@/components/motion-provider";
+import { ServerNotice } from "@/components/server-notice";
 import "./globals.css";
 
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full">
         <MotionProvider>
           <AuthProvider>{children}</AuthProvider>
+          <ServerNotice />
         </MotionProvider>
       </body>
     </html>

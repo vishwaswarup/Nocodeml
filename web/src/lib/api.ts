@@ -1,3 +1,4 @@
+import { trackRequest } from "./slow-notice";
 import { supabase } from "./supabase";
 
 export class ApiError extends Error {
@@ -13,7 +14,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 12000, 15000, 15000];
 
 /** Send a request to the FastAPI backend as the signed-in user and return the successful Response (errors throw). */
-async function request(path: string, init: RequestInit = {}): Promise<Response> {
+function request(path: string, init: RequestInit = {}): Promise<Response> {
+  return trackRequest(requestOnce(path, init));
+}
+
+async function requestOnce(path: string, init: RequestInit = {}): Promise<Response> {
   const { data } = await supabase().auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new ApiError(401, "Not signed in.");
