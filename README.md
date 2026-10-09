@@ -5,7 +5,7 @@
 Upload a dataset, make each decision visually (cleaning, features, split, models, settings), train up to five models side by
 side, and get honest, reproducible results with a PDF report. Built for researchers who keep copy-pasting the same pipeline code.
 
-**Live:** https://nocodeml.vercel.app &nbsp;·&nbsp; **Status:** public beta &nbsp;·&nbsp; [Privacy](https://nocodeml.vercel.app/privacy) · [Terms](https://nocodeml.vercel.app/terms)
+**Live:** https://nocodeml.vercel.app &nbsp;·&nbsp; **Status:** public beta &nbsp;·&nbsp; **License:** MIT &nbsp;·&nbsp; [Privacy](https://nocodeml.vercel.app/privacy) · [Terms](https://nocodeml.vercel.app/terms)
 
 ![NoCodeML landing page](docs/images/landing.png)
 
@@ -147,5 +147,6 @@ How data is handled is described in the [Privacy Policy](https://nocodeml.vercel
 
 ## License
 
-No license has been chosen yet, so all rights are reserved for now. Open an issue or email if you'd like to use or contribute
-to the code.
+[MIT](LICENSE) © 2026 Vishwaswarup Rath. You are free to use, copy, modify and distribute the code, including commercially,
+as long as the copyright notice and licence text are kept. The software is provided as is, without warranty.
+Contributions are welcome: open an issue first for anything sizeable.
